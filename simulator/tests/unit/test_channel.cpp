@@ -79,3 +79,28 @@ TEST_F(BlockFadingChannelTest, AvailabilityFull_AllLinksActive) {
         EXPECT_DOUBLE_EQ(l.outage_prob, 0.0); // 1 - availability
     }
 }
+
+// ---------------------------------------------------------------------------
+// 3. Availability = 0.0 → all links always inactive
+// ---------------------------------------------------------------------------
+
+TEST_F(BlockFadingChannelTest, AvailabilityZero_AllLinksInactive) {
+    BlockFadingChannel::Params p;
+    p.availability = 0.0;
+    p.avg_snr_db = 20.0;
+    p.snr_std_db = 5.0;
+    p.outage_snr_db = -10.0;
+    p.bandwidth = 10e6;
+    BlockFadingChannel ch(p);
+
+    auto links = makeTestLinks(3);
+    ch.update(links, empty_nodes_, rng_);
+
+    for (const auto& l : links) {
+        EXPECT_FALSE(l.active);
+        EXPECT_DOUBLE_EQ(l.capacity_bps, 0.0);
+        // SNR should be very low (our implementation uses -200 dB when not available)
+        EXPECT_LT(l.snr, -100.0);
+        EXPECT_DOUBLE_EQ(l.outage_prob, 1.0);
+    }
+}
