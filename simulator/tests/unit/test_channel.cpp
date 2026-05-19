@@ -49,9 +49,33 @@ protected:
 };
 
 // ---------------------------------------------------------------------------
-// 1. Construction and naming (trivial, but verifies polymorphism)
+// 1. Construction and naming
 // ---------------------------------------------------------------------------
 
 TEST_F(BlockFadingChannelTest, NameReturnsBlockFading) {
     EXPECT_EQ(channel_->name(), "BlockFading");
+}
+
+// ---------------------------------------------------------------------------
+// 2. Availability = 1.0 → all links always active (ignoring outage threshold)
+// ---------------------------------------------------------------------------
+
+TEST_F(BlockFadingChannelTest, AvailabilityFull_AllLinksActive) {
+    BlockFadingChannel::Params p;
+    p.availability = 1.0;
+    p.avg_snr_db = 30.0;
+    p.snr_std_db = 0.0;       // deterministic SNR
+    p.outage_snr_db = -999.0; // effectively no outage
+    p.bandwidth = 10e6;
+    BlockFadingChannel ch(p);
+
+    auto links = makeTestLinks(5);
+    ch.update(links, empty_nodes_, rng_);
+
+    for (const auto& l : links) {
+        EXPECT_TRUE(l.active);
+        EXPECT_DOUBLE_EQ(l.snr, 30.0);   // no variance, SNR exactly 30 dB
+        EXPECT_GT(l.capacity_bps, 0.0);
+        EXPECT_DOUBLE_EQ(l.outage_prob, 0.0); // 1 - availability
+    }
 }
