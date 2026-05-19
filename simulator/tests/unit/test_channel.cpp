@@ -132,3 +132,32 @@ TEST_F(BlockFadingChannelTest, OutageThreshold_MakesLinkInactiveOnLowSNR) {
     EXPECT_GT(active_count, 0);
     EXPECT_LT(active_count, links.size()); // at least one inactive
 }
+
+// ---------------------------------------------------------------------------
+// 5. Determinism: same seed → identical results
+// ---------------------------------------------------------------------------
+
+TEST_F(BlockFadingChannelTest, Determinism_SameSeedSameResult) {
+    auto links1 = makeTestLinks(10);
+    auto links2 = makeTestLinks(10);
+
+    std::mt19937 rng_copy = rng_; // snapshot the seeded rng
+    channel_->update(links1, empty_nodes_, rng_copy);
+    channel_->update(links2, empty_nodes_, rng_copy); // same rng state, should diverge? No.
+
+    // Actually to test determinism we need two separate rngs with same seed.
+    std::mt19937 rngA(42);
+    std::mt19937 rngB(42);
+    auto linksA = makeTestLinks(10);
+    auto linksB = makeTestLinks(10);
+
+    channel_->update(linksA, empty_nodes_, rngA);
+    channel_->update(linksB, empty_nodes_, rngB);
+
+    for (size_t i = 0; i < linksA.size(); ++i) {
+        EXPECT_DOUBLE_EQ(linksA[i].snr, linksB[i].snr);
+        EXPECT_EQ(linksA[i].active, linksB[i].active);
+        EXPECT_DOUBLE_EQ(linksA[i].capacity_bps, linksB[i].capacity_bps);
+        EXPECT_DOUBLE_EQ(linksA[i].outage_prob, linksB[i].outage_prob);
+    }
+}
