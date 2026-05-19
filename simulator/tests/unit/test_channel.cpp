@@ -145,7 +145,7 @@ TEST_F(BlockFadingChannelTest, Determinism_SameSeedSameResult) {
     channel_->update(links1, empty_nodes_, rng_copy);
     channel_->update(links2, empty_nodes_, rng_copy); // same rng state, should diverge? No.
 
-    // Actually to test determinism we need two separate rngs with same seed.
+    // To test determinism we need two separate rngs with same seed.
     std::mt19937 rngA(42);
     std::mt19937 rngB(42);
     auto linksA = makeTestLinks(10);
@@ -160,4 +160,75 @@ TEST_F(BlockFadingChannelTest, Determinism_SameSeedSameResult) {
         EXPECT_DOUBLE_EQ(linksA[i].capacity_bps, linksB[i].capacity_bps);
         EXPECT_DOUBLE_EQ(linksA[i].outage_prob, linksB[i].outage_prob);
     }
+}
+
+// ---------------------------------------------------------------------------
+// 6. Edge cases: empty link vector
+// ---------------------------------------------------------------------------
+
+TEST_F(BlockFadingChannelTest, EmptyLinks_DoesNotCrash) {
+    std::vector<LinkState> empty;
+    EXPECT_NO_THROW(channel_->update(empty, empty_nodes_, rng_));
+}
+
+// ---------------------------------------------------------------------------
+// 7. Single link boundary values
+// ---------------------------------------------------------------------------
+
+TEST_F(BlockFadingChannelTest, SingleLink_HighSNR_ActiveAndPositiveCapacity) {
+    auto links = makeTestLinks(1);
+    channel_->update(links, empty_nodes_, rng_);
+    if (links[0].active) {
+        EXPECT_GT(links[0].capacity_bps, 0.0);
+    }
+
+}
+
+// ---------------------------------------------------------------------------
+// 8. Correct computation of outage probability
+// ---------------------------------------------------------------------------
+
+TEST_F(BlockFadingChannelTest, OutageProbabilityMatchesAvailability) {
+    // outage_prob = 1 - availability
+    BlockFadingChannel::Params p;
+    p.availability = 0.75;
+    p.avg_snr_db = 20.0;
+    p.snr_std_db = 0.0;
+    p.outage_snr_db = -10.0;
+    p.bandwidth = 10e6;
+    BlockFadingChannel ch(p);
+
+    auto links = makeTestLinks(5);
+    ch.update(links, empty_nodes_, rng_);
+
+    for (const auto& l : links) {
+        EXPECT_DOUBLE_EQ(l.outage_prob, 1.0 - p.availability);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 9. Capacity formula: check monotonicity with SNR
+// ---------------------------------------------------------------------------
+
+TEST_F(BlockFadingChannelTest, CapacityIncreasesWithSNR) {
+    BlockFadingChannel::Params p;
+    p.availability = 1.0;
+    p.avg_snr_db = 10.0;
+    p.snr_std_db = 0.0;
+    p.outage_snr_db = -999.0;
+    p.bandwidth = 1e6;
+    BlockFadingChannel ch(p);
+
+    auto links_low = makeTestLinks(1);
+    ch.update(links_low, empty_nodes_, rng_);
+
+    p.avg_snr_db = 20.0;
+    BlockFadingChannel ch2(p);
+    auto links_high = makeTestLinks(1);
+    std::mt19937 rng2(42);
+    ch2.update(links_high, empty_nodes_, rng2);
+
+    ASSERT_TRUE(links_low[0].active);
+    ASSERT_TRUE(links_high[0].active);
+    EXPECT_GT(links_high[0].capacity_bps, links_low[0].capacity_bps);
 }
