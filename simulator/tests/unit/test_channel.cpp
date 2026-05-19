@@ -104,3 +104,31 @@ TEST_F(BlockFadingChannelTest, AvailabilityZero_AllLinksInactive) {
         EXPECT_DOUBLE_EQ(l.outage_prob, 1.0);
     }
 }
+
+// ---------------------------------------------------------------------------
+// 4. Outage threshold: even if "available", deep fade can cause inactive
+// ---------------------------------------------------------------------------
+
+TEST_F(BlockFadingChannelTest, OutageThreshold_MakesLinkInactiveOnLowSNR) {
+    // Set average SNR exactly at the outage threshold, but with high variance
+    // so some draws fall below threshold.
+    BlockFadingChannel::Params p;
+    p.availability = 1.0;        // always available
+    p.avg_snr_db = -5.0;         // near threshold
+    p.snr_std_db = 5.0;          // high variance
+    p.outage_snr_db = -10.0;     // threshold
+    p.bandwidth = 10e6;
+    BlockFadingChannel ch(p);
+
+    auto links = makeTestLinks(100);
+    std::mt19937 local_rng(12345);
+    ch.update(links, empty_nodes_, local_rng);
+
+    size_t active_count = 0;
+    for (const auto& l : links) {
+        if (l.active) ++active_count;
+    }
+    // With high variance, not all should be active; expect some inactive.
+    EXPECT_GT(active_count, 0);
+    EXPECT_LT(active_count, links.size()); // at least one inactive
+}
