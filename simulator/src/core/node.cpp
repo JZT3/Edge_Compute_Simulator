@@ -33,6 +33,7 @@ void SDRNode::updateProcessing(double dt) {
         // Simple placeholder: processing finishes instantly.
         energy_used_ += compute_.fft_ops_per_sec * dt * 1e-6;  // energy in micro-joules
         has_unprocessed_signal_ = false;
+        buffer_size_ = 0; // This makes the buffer state consistent: a signal detection sets the buffer, and processing clears it.
     }
 }
 
