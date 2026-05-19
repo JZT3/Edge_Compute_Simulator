@@ -156,3 +156,27 @@ TEST_F(SDRNodeTest, SetSignalDetected_TogglesBetweenTrueAndFalse) {
     valid_node_->setSignalDetected(true);
     EXPECT_EQ(valid_node_->getState().buffer_size, 1);
 }
+
+// ---------------------------------------------------------------------------
+// 4. getState – snapshot consistency
+// ---------------------------------------------------------------------------
+
+TEST_F(SDRNodeTest, GetState_AfterMultipleOperations_ReflectsCorrectState) {
+    // Sequence: scan, signal detected, then switch to process, drain, transmit.
+    Action scan;
+    scan.scan_params = RFParams{2.4e9, 20e6, 40, 40e6};
+    valid_node_->applyAction(scan);
+    valid_node_->setSignalDetected(true);
+
+    // Switch to process
+    Action proc;
+    proc.process_task_ids.push_back(10);
+    valid_node_->applyAction(proc);
+    valid_node_->updateProcessing(0.05);
+
+    const auto state = valid_node_->getState();
+    EXPECT_EQ(state.mode, NodeMode::PROCESS);
+    EXPECT_EQ(state.buffer_size, 0);
+    EXPECT_GT(state.energy_used, 0.0);
+    EXPECT_DOUBLE_EQ(state.current_rf.center_freq, 2.4e9); // kept from scan
+}
