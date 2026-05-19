@@ -180,3 +180,16 @@ TEST_F(SDRNodeTest, GetState_AfterMultipleOperations_ReflectsCorrectState) {
     EXPECT_GT(state.energy_used, 0.0);
     EXPECT_DOUBLE_EQ(state.current_rf.center_freq, 2.4e9); // kept from scan
 }
+
+// ---------------------------------------------------------------------------
+// 6. Invariants: Idempotence of applyAction with same action
+// ---------------------------------------------------------------------------
+TEST_F(SDRNodeTest, ApplyAction_SameActionTwice_GivesSameMode) {
+    Action scan;
+    scan.scan_params = RFParams{1e9, 1e6, 0, 2e6};
+    valid_node_->applyAction(scan);
+    EXPECT_EQ(valid_node_->getState().mode, NodeMode::SCAN);
+
+    valid_node_->applyAction(scan);
+    EXPECT_EQ(valid_node_->getState().mode, NodeMode::SCAN);
+}
