@@ -182,7 +182,7 @@ TEST_F(SDRNodeTest, GetState_AfterMultipleOperations_ReflectsCorrectState) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Invariants: Idempotence of applyAction with same action
+// 5. Invariants: Idempotence of applyAction with same action
 // ---------------------------------------------------------------------------
 TEST_F(SDRNodeTest, ApplyAction_SameActionTwice_GivesSameMode) {
     Action scan;
@@ -192,4 +192,53 @@ TEST_F(SDRNodeTest, ApplyAction_SameActionTwice_GivesSameMode) {
 
     valid_node_->applyAction(scan);
     EXPECT_EQ(valid_node_->getState().mode, NodeMode::SCAN);
+}
+
+// ---------------------------------------------------------------------------
+// 6. updateProcessing – state change & energy accumulation
+// ---------------------------------------------------------------------------
+
+TEST_F(SDRNodeTest, UpdateProcessing_WhenProcessingAndHasSignal_DrainsBufferAndConsumesEnergy) {
+    // Setup: switch to PROCESS mode and mark signal detected.
+    Action proc;
+    proc.process_task_ids.push_back(0);
+    valid_node_->applyAction(proc);
+    valid_node_->setSignalDetected(true);
+
+    const double energy_before = valid_node_->getState().energy_used;
+    valid_node_->updateProcessing(0.1);   // dt = 0.1 s
+
+    const auto state = valid_node_->getState();
+    EXPECT_EQ(state.buffer_size, 0);
+    EXPECT_GT(state.energy_used, energy_before);   // energy increased
+    EXPECT_DOUBLE_EQ(state.energy_used, energy_before + 1e9 * 0.1 * 1e-6); // placeholder formula
+}
+
+TEST_F(SDRNodeTest, UpdateProcessing_WhenProcessingButNoSignal_DoesNothing) {
+    Action proc;
+    proc.process_task_ids.push_back(0);
+    valid_node_->applyAction(proc);
+    // No signal detected
+
+    const double energy_before = valid_node_->getState().energy_used;
+    valid_node_->updateProcessing(0.1);
+    const auto state = valid_node_->getState();
+
+    EXPECT_EQ(state.energy_used, energy_before);
+    EXPECT_EQ(state.buffer_size, 0); // still 0
+}
+
+TEST_F(SDRNodeTest, UpdateProcessing_WhenNotInProcessMode_DoesNotDrain) {
+    // Scan mode, signal detected
+    Action scan;
+    scan.scan_params = RFParams{2e9, 1e6, 0, 2e6};
+    valid_node_->applyAction(scan);
+    valid_node_->setSignalDetected(true);
+
+    const double energy_before = valid_node_->getState().energy_used;
+    valid_node_->updateProcessing(0.1);
+    const auto state = valid_node_->getState();
+
+    EXPECT_EQ(state.buffer_size, 1);      // unchanged
+    EXPECT_EQ(state.energy_used, energy_before);
 }
