@@ -131,3 +131,28 @@ TEST_F(SDRNodeTest, ApplyAction_Twice_ResetsCorrectly) {
     valid_node_->applyAction(idle);
     EXPECT_EQ(valid_node_->getState().mode, NodeMode::IDLE);
 }
+
+// ---------------------------------------------------------------------------
+// 3. setSignalDetected – boundary value analysis
+// ---------------------------------------------------------------------------
+
+TEST_F(SDRNodeTest, SetSignalDetected_True_SetsBufferAndFlag) {
+    valid_node_->setSignalDetected(true);
+    const auto state = valid_node_->getState();
+    EXPECT_EQ(state.buffer_size, 1);      // minimal buffer model
+}
+
+TEST_F(SDRNodeTest, SetSignalDetected_False_ClearsBuffer) {
+    valid_node_->setSignalDetected(true);
+    valid_node_->setSignalDetected(false);
+    EXPECT_EQ(valid_node_->getState().buffer_size, 0);
+}
+
+TEST_F(SDRNodeTest, SetSignalDetected_TogglesBetweenTrueAndFalse) {
+    valid_node_->setSignalDetected(true);
+    EXPECT_EQ(valid_node_->getState().buffer_size, 1);
+    valid_node_->setSignalDetected(false);
+    EXPECT_EQ(valid_node_->getState().buffer_size, 0);
+    valid_node_->setSignalDetected(true);
+    EXPECT_EQ(valid_node_->getState().buffer_size, 1);
+}
