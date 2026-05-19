@@ -38,3 +38,24 @@ TEST_F(SDRNodeTest, Constructor_ValidParameters_InitialStateIsIdle) {
     EXPECT_DOUBLE_EQ(state.energy_used, 0.0);
     // Neighbor beliefs map starts empty (not tested further in MVP).
 }
+
+// Death tests: verify assertions on invalid construction.
+TEST(SDRNodeDeathTest, Constructor_EmptyName_Asserts) {
+    // The node name must not be empty – we expect an assertion failure.
+    EXPECT_DEATH(
+        {
+            SDRNode node(NodeId{1}, "", ComputeCapability{1e9,0,1ULL<<30}, {2.4e9});
+        },
+        "Node name must not be empty"
+    );
+}
+
+TEST(SDRNodeDeathTest, Constructor_EmptyBands_Asserts) {
+    EXPECT_DEATH(
+        {
+            SDRNode node(NodeId{2}, "Valid", ComputeCapability{1e9,0,1ULL<<30}, {});
+        },
+        "Node must support at least one frequency band"
+    );
+}
+
