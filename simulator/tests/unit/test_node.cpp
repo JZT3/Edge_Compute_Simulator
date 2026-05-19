@@ -96,3 +96,38 @@ TEST_F(SDRNodeTest, ApplyAction_AllFieldsEmpty_ResultsInIdle) {
 
     EXPECT_EQ(valid_node_->getState().mode, NodeMode::IDLE);
 }
+
+TEST_F(SDRNodeTest, ApplyAction_CombinedScanAndProcess_LastSetWins) {
+    // Current logic sets mode sequentially; scan then process -> PROCESS wins.
+    Action act;
+    act.scan_params = RFParams{2.4e9, 1e6, 0, 2e6};
+    act.process_task_ids.push_back(1);
+    valid_node_->applyAction(act);
+
+    EXPECT_EQ(valid_node_->getState().mode, NodeMode::PROCESS);
+    // RF params should still be stored (we set them before mode overwrite).
+    EXPECT_DOUBLE_EQ(valid_node_->getState().current_rf.center_freq, 2.4e9);
+}
+
+TEST_F(SDRNodeTest, ApplyAction_ScanThenTransmit_TransmitWins) {
+    Action act;
+    act.scan_params = RFParams{5e9, 2e6, 0, 4e6};
+    act.burst = Action::Burst{2, 1, 10.0, {}};
+    valid_node_->applyAction(act);
+
+    EXPECT_EQ(valid_node_->getState().mode, NodeMode::TRANSMIT);
+    // RF params still stored.
+    EXPECT_DOUBLE_EQ(valid_node_->getState().current_rf.center_freq, 5e9);
+}
+
+TEST_F(SDRNodeTest, ApplyAction_Twice_ResetsCorrectly) {
+    // Apply scan, then idle – mode should be IDLE afterwards.
+    Action scan;
+    scan.scan_params = RFParams{1e9, 1e6, 0, 2e6};
+    valid_node_->applyAction(scan);
+    EXPECT_EQ(valid_node_->getState().mode, NodeMode::SCAN);
+
+    Action idle;
+    valid_node_->applyAction(idle);
+    EXPECT_EQ(valid_node_->getState().mode, NodeMode::IDLE);
+}
