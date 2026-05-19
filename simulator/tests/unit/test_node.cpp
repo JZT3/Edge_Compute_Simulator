@@ -59,3 +59,40 @@ TEST(SDRNodeDeathTest, Constructor_EmptyBands_Asserts) {
     );
 }
 
+// ---------------------------------------------------------------------------
+// 2. applyAction – state‑based testing of mode transitions
+// ---------------------------------------------------------------------------
+
+TEST_F(SDRNodeTest, ApplyAction_ScanAction_SetsModeToScanAndRFParams) {
+    Action act;
+    act.scan_params = RFParams{2.41e9, 10e6, 30.0, 20e6};
+    valid_node_->applyAction(act);
+
+    const auto state = valid_node_->getState();
+    EXPECT_EQ(state.mode, NodeMode::SCAN);
+    EXPECT_DOUBLE_EQ(state.current_rf.center_freq, 2.41e9);
+    EXPECT_DOUBLE_EQ(state.current_rf.bandwidth, 10e6);
+}
+
+TEST_F(SDRNodeTest, ApplyAction_ProcessAction_SetsModeToProcess) {
+    Action act;
+    act.process_task_ids.push_back(42);
+    valid_node_->applyAction(act);
+
+    EXPECT_EQ(valid_node_->getState().mode, NodeMode::PROCESS);
+}
+
+TEST_F(SDRNodeTest, ApplyAction_TransmitAction_SetsModeToTransmit) {
+    Action act;
+    act.burst = Action::Burst{1, 0, 20.0, {}};
+    valid_node_->applyAction(act);
+
+    EXPECT_EQ(valid_node_->getState().mode, NodeMode::TRANSMIT);
+}
+
+TEST_F(SDRNodeTest, ApplyAction_AllFieldsEmpty_ResultsInIdle) {
+    Action act; // default – nothing set
+    valid_node_->applyAction(act);
+
+    EXPECT_EQ(valid_node_->getState().mode, NodeMode::IDLE);
+}
