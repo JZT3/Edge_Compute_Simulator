@@ -179,3 +179,58 @@ TEST_F(SimulatorTest, Determinism_SameConfigAndAgents_IdenticalEventLog) {
         EXPECT_EQ(logA[i].params.size(), logB[i].params.size());
     }
 }
+
+// ---------------------------------------------------------------------------
+// 5. Sensing: signal detection is recorded when node scans at correct frequency
+// ---------------------------------------------------------------------------
+
+TEST_F(SimulatorTest, ScanAction_DetectsSignalWhenInBand) {
+    // Agent 0 scans at 2.4 GHz (where we've hardcoded an emitter for t<5s)
+    Action scan_action;
+    scan_action.scan_params = RFParams{2.4e9, 20e6, 40.0, 40e6};
+    agent0_->next_action = scan_action;
+    agent1_->next_action = Action{}; // silent
+
+    simulator_->step(); // time 0.0 → 0.1 (t < 5s)
+
+    const auto& events = simulator_->getEventLog();
+    bool signal_detected = false;
+    for (const auto& ev : events) {
+        if (ev.type == "SignalDetected" && ev.node_id == 0) {
+            signal_detected = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(signal_detected);
+}
+
+TEST_F(SimulatorTest, ScanAction_NoSignalWhenOutOfBand) {
+    // Agent 0 scans at 1 GHz (outside the emitter's band)
+    Action scan_action;
+    scan_action.scan_params = RFParams{1.0e9, 20e6, 40.0, 40e6};
+    agent0_->next_action = scan_action;
+    agent1_->next_action = Action{}; // silent
+
+    simulator_->step();
+
+    const auto& events = simulator_->getEventLog();
+    bool signal_detected = false;
+    for (const auto& ev : events) {
+        if (ev.type == "SignalDetected") {
+            signal_detected = true;
+            break;
+        }
+    }
+    EXPECT_FALSE(signal_detected);
+}
+
+TEST_F(SimulatorTest, NoScan_NoSignalDetected) {
+    // No scanning action → no signal detection event
+    agent0_->next_action = Action{}; // idle
+    simulator_->step();
+
+    const auto& events = simulator_->getEventLog();
+    for (const auto& ev : events) {
+        EXPECT_NE(ev.type, "SignalDetected");
+    }
+}
