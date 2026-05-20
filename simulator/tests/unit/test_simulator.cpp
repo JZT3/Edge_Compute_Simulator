@@ -262,3 +262,29 @@ TEST_F(SimulatorTest, ProcessAfterScan_DrainsBufferAndAddsEvent) {
     // Energy should have increased
     EXPECT_GT(node_states[0].energy_used, 0.0);
 }
+
+// ---------------------------------------------------------------------------
+// 7. Finished condition & reset
+// ---------------------------------------------------------------------------
+
+TEST_F(SimulatorTest, IsFinished_WhenTimeReachesDuration) {
+    // Advance until just at duration
+    while (simulator_->currentTime() < config_.duration) {
+        simulator_->step();
+    }
+    EXPECT_TRUE(simulator_->isFinished());
+    // Stepping again should do nothing
+    size_t event_count_before = simulator_->getEventLog().size();
+    simulator_->step();
+    EXPECT_EQ(simulator_->getEventLog().size(), event_count_before);
+}
+
+TEST_F(SimulatorTest, Reset_ClearsLogAndResetsTime) {
+    simulator_->step();
+    EXPECT_GT(simulator_->getEventLog().size(), 0);
+    EXPECT_GT(simulator_->currentTime(), 0.0);
+    simulator_->reset(999);
+    EXPECT_EQ(simulator_->getEventLog().size(), 0);
+    EXPECT_DOUBLE_EQ(simulator_->currentTime(), 0.0);
+    EXPECT_FALSE(simulator_->isFinished());
+}
