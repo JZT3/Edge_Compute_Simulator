@@ -280,10 +280,18 @@ TEST_F(SimulatorTest, IsFinished_WhenTimeReachesDuration) {
 }
 
 TEST_F(SimulatorTest, Reset_ClearsLogAndResetsTime) {
+    // Force an action that produces a “SignalDetected” event
+    Action scan;
+    scan.scan_params = RFParams{2.4e9, 20e6, 40.0, 40e6};
+    agent0_->next_action = scan;
     simulator_->step();
-    EXPECT_GT(simulator_->getEventLog().size(), 0);
-    EXPECT_GT(simulator_->currentTime(), 0.0);
+
+    // there should be at least one event
+    ASSERT_GT(simulator_->getEventLog().size(), 0);
+    ASSERT_GT(simulator_->currentTime(), 0.0);
+
     simulator_->reset(999);
+
     EXPECT_EQ(simulator_->getEventLog().size(), 0);
     EXPECT_DOUBLE_EQ(simulator_->currentTime(), 0.0);
     EXPECT_FALSE(simulator_->isFinished());
