@@ -68,8 +68,8 @@ struct NodeState {
     double energy_used = 0.0;
     std::unordered_map<int, double> neighbor_availability_belief; // node_id -> probability
     double tx_power_dbm = 20.0;   // per‑node quality (higher → longer range)
-    double x = 0.0;
-    double y = 0.0;
+    double x = 0.0;  // meters
+    double y = 0.0;  // meters
 };
 
 // Link state snapshot
