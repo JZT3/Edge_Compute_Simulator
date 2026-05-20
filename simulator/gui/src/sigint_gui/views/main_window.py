@@ -1,5 +1,6 @@
 """Main application window for the SIGINT simulation GUI."""
 from __future__ import annotations
+import sys
 import logging
 from pathlib import Path
 from typing import Optional
@@ -9,8 +10,10 @@ setup_logging(log_file="sim_gui.log", level=logging.INFO)
 
 
 from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QPalette, QColor
 from PyQt5.QtWidgets import (
     QAction,
+    QApplication,
     QDockWidget,
     QFileDialog,
     QMainWindow,
@@ -33,7 +36,24 @@ logger = logging.getLogger(__name__)
 MAX_STEP_INTERVAL_MS: int = 200
 MIN_STEP_INTERVAL_MS: int = 10
 
-
+def apply_dark_theme(app: QApplication) -> None:
+    """Force a dark colour palette on the entire application."""
+    app.setStyle("Fusion")
+    dark_palette = QPalette()
+    dark_palette.setColor(QPalette.Window, QColor(53, 53, 53))
+    dark_palette.setColor(QPalette.WindowText, Qt.white)
+    dark_palette.setColor(QPalette.Base, QColor(25, 25, 25))
+    dark_palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
+    dark_palette.setColor(QPalette.ToolTipBase, Qt.white)
+    dark_palette.setColor(QPalette.ToolTipText, Qt.white)
+    dark_palette.setColor(QPalette.Text, Qt.white)
+    dark_palette.setColor(QPalette.Button, QColor(53, 53, 53))
+    dark_palette.setColor(QPalette.ButtonText, Qt.white)
+    dark_palette.setColor(QPalette.BrightText, Qt.red)
+    dark_palette.setColor(QPalette.Link, QColor(42, 130, 218))
+    dark_palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
+    dark_palette.setColor(QPalette.HighlightedText, Qt.black)
+    app.setPalette(dark_palette)
 class MainWindow(QMainWindow):
     """Top‑level window that owns the simulator, controller, and all views."""
 
@@ -254,6 +274,7 @@ class MainWindow(QMainWindow):
         assert self._sim is not None, "Cannot refresh without simulator"
         nodes = self._sim.get_node_states()
         links = self._sim.get_link_states()
+        print(f"Refresh: {len(nodes)} nodes, {len(links)} links")  # DEBUG
         self._graph_view.update_state(nodes, links, self._sim.current_time)
 
     def _export_graph_png(self) -> None:

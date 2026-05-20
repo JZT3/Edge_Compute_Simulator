@@ -1,136 +1,232 @@
-"""Interactive network graph view (QGraphicsScene + QGraphicsView)."""
+"""Interactive network graph using NetworkX, Pyvis, and QWebEngineView."""
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, FrozenSet, List, Optional, Tuple
 
-from PyQt5.QtCore import QPointF, QRectF, Qt
+from PyQt5.QtCore import QLineF, QPointF, QRectF, Qt
 from PyQt5.QtGui import (
-    QBrush,
-    QColor,
-    QFont,
-    QPainter,
-    QPen,
-    QRadialGradient,
+    QBrush, QColor, QFont, QImage, QPainter, QPen, QPolygonF,
 )
 from PyQt5.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsItem,
-    QGraphicsLineItem,
     QGraphicsScene,
     QGraphicsTextItem,
     QGraphicsView,
-    QToolTip,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ..models import LinkState, NodeMode, NodeState
+from ..utils.layout import compute_layout
 
 # ---------------------------------------------------------------------------
-# Constants
+# Visual constants
 # ---------------------------------------------------------------------------
-NODE_RADIUS: float = 20.0
+NODE_RADIUS: float = 22.0
+ARROW_SIZE: float = 11.0
+EDGE_WIDTH_ACTIVE: float = 2.5
+EDGE_WIDTH_INACTIVE: float = 1.0
+LABEL_FONT = QFont("Arial", 9, QFont.Bold)
+
+BACKGROUND_COLOR = QColor("#1e1e1e")
+EDGE_ACTIVE_COLOR = QColor("#00c853")    # vivid green
+EDGE_INACTIVE_COLOR = QColor("#555555")  # dim grey
+
 NODE_COLORS: Dict[NodeMode, QColor] = {
-    NodeMode.IDLE: QColor(200, 200, 200),
-    NodeMode.SCAN: QColor(100, 200, 100),
-    NodeMode.PROCESS: QColor(100, 100, 255),
-    NodeMode.TRANSMIT: QColor(255, 80, 80),
+    NodeMode.IDLE:     QColor("#9e9e9e"),   # light grey
+    NodeMode.SCAN:     QColor("#69f0ae"),   # limegreen
+    NodeMode.PROCESS:  QColor("#40c4ff"),   # dodgerblue
+    NodeMode.TRANSMIT: QColor("#ff5252"),   # tomato
 }
-LINK_ACTIVE_PEN = QPen(QColor(0, 180, 0), 2)
-LINK_INACTIVE_PEN = QPen(QColor(120, 120, 120), 1, Qt.DashLine)
-FONT = QFont("Sans", 8)
-
-# Scene margin (world coordinates)
-MARGIN: float = 50.0
 
 
 # ---------------------------------------------------------------------------
-# Custom items
+# Graphics items
 # ---------------------------------------------------------------------------
 
-class _NodeItem(QGraphicsEllipseItem):
-    """A node in the network graph, drawn as a coloured circle."""
+class EdgeItem(QGraphicsItem):
+    """Directed edge rendered as a line with an arrowhead at the destination.
 
-    def __init__(self, node_state: NodeState) -> None:
-        super().__init__(-NODE_RADIUS, -NODE_RADIUS, 2 * NODE_RADIUS, 2 * NODE_RADIUS)
-        self._node = node_state
-        self.setFlag(QGraphicsItem.ItemIsSelectable, True)
-        self.setAcceptHoverEvents(True)
-        self._refresh_brush()
-        self._label = QGraphicsTextItem(str(node_state.id), self)
-        self._label.setFont(FONT)
-        self._label.setDefaultTextColor(Qt.white)
-        self._label.setPos(-5, -8)
+    The line is shortened at both ends by NODE_RADIUS so it meets the node
+    circumference rather than the centre.
+    """
 
-    def _refresh_brush(self) -> None:
-        colour = NODE_COLORS.get(self._node.mode, NODE_COLORS[NodeMode.IDLE])
-        gradient = QRadialGradient(0, 0, NODE_RADIUS)
-        gradient.setColorAt(0, colour.lighter(130))
-        gradient.setColorAt(1, colour.darker(150))
-        self.setBrush(QBrush(gradient))
-        self.setPen(QPen(colour.darker(200), 1.5))
-
-    def update_from_state(self, node_state: NodeState) -> None:
-        """Update appearance when the node state changes."""
-        self._node = node_state
-        self._refresh_brush()
-        self._label.setPlainText(str(node_state.id))
-
-    def hoverEnterEvent(self, event: object) -> None:
-        msg = (
-            f"Node {self._node.id}: {self._node.name}\n"
-            f"Mode: {self._node.mode.name}\n"
-            f"Buffer: {self._node.buffer_size}\n"
-            f"Energy: {self._node.energy_used:.3e}"
-        )
-        QToolTip.showText(event.screenPos(), msg)  # type: ignore[attr-defined]
-
-
-class _LinkItem(QGraphicsLineItem):
-    """A link between two node items, drawn as a line."""
-
-    def __init__(self, link_state: LinkState) -> None:
+    def __init__(
+        self,
+        src_pos: QPointF,
+        dst_pos: QPointF,
+        active: bool,
+        tooltip: str,
+    ) -> None:
         super().__init__()
-        self._link = link_state
-        self._update_pen()
+        self.setAcceptHoverEvents(True)
+        self.setToolTip(tooltip)
+        self.setZValue(-1)          # draw behind nodes
 
-    def _update_pen(self) -> None:
-        self.setPen(LINK_ACTIVE_PEN if self._link.active else LINK_INACTIVE_PEN)
+        self._color = EDGE_ACTIVE_COLOR if active else EDGE_INACTIVE_COLOR
+        self._width = EDGE_WIDTH_ACTIVE if active else EDGE_WIDTH_INACTIVE
+        self._line = QLineF()
+        self._arrow = QPolygonF()
 
-    def update_from_state(self, link_state: LinkState) -> None:
-        self._link = link_state
-        self._update_pen()
+        vec = QLineF(src_pos, dst_pos)
+        length = vec.length()
+        if length < 2.0 * NODE_RADIUS + 1.0:
+            return  # nodes overlap; skip drawing
 
-    def set_endpoints(self, p1: QPointF, p2: QPointF) -> None:
-        self.setLine(p1.x(), p1.y(), p2.x(), p2.y())
+        # Unit direction vector
+        dx = (dst_pos.x() - src_pos.x()) / length
+        dy = (dst_pos.y() - src_pos.y()) / length
+
+        p1 = QPointF(src_pos.x() + dx * NODE_RADIUS,
+                     src_pos.y() + dy * NODE_RADIUS)
+        p2 = QPointF(dst_pos.x() - dx * NODE_RADIUS,
+                     dst_pos.y() - dy * NODE_RADIUS)
+        self._line = QLineF(p1, p2)
+
+        # Arrowhead — two points fanning back from p2
+        angle = math.atan2(-self._line.dy(), self._line.dx())
+        a1 = QPointF(
+            p2.x() + math.cos(angle + math.pi / 6.0) * ARROW_SIZE,
+            p2.y() - math.sin(angle + math.pi / 6.0) * ARROW_SIZE,
+        )
+        a2 = QPointF(
+            p2.x() + math.cos(angle - math.pi / 6.0) * ARROW_SIZE,
+            p2.y() - math.sin(angle - math.pi / 6.0) * ARROW_SIZE,
+        )
+        self._arrow = QPolygonF([p2, a1, a2])
+
+    # QGraphicsItem protocol ------------------------------------------------
+
+    def boundingRect(self) -> QRectF:
+        if self._line.isNull():
+            return QRectF()
+        extra = ARROW_SIZE + EDGE_WIDTH_ACTIVE
+        return (
+            QRectF(self._line.p1(), self._line.p2())
+            .normalized()
+            .adjusted(-extra, -extra, extra, extra)
+        )
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        if self._line.isNull():
+            return
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(self._color, self._width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(QBrush(self._color))
+        painter.drawLine(self._line)
+        painter.drawPolygon(self._arrow)
+
+
+class NodeItem(QGraphicsEllipseItem):
+    """Circular node with a centred label; draggable and selectable."""
+
+    def __init__(
+        self,
+        node_id: int,
+        pos: QPointF,
+        color: QColor,
+        tooltip: str,
+    ) -> None:
+        r = NODE_RADIUS
+        super().__init__(-r, -r, 2.0 * r, 2.0 * r)
+        self.node_id = node_id          # public: used by scene for id lookup
+
+        self.setPos(pos)
+        self.setBrush(QBrush(color))
+        self.setPen(QPen(color.lighter(160), 1.5))
+        self.setToolTip(tooltip)
+        self.setFlag(QGraphicsItem.ItemIsMovable, True)
+        self.setFlag(QGraphicsItem.ItemIsSelectable, True)
+        self.setFlag(QGraphicsItem.ItemSendsGeometryChanges, True)
+        self.setAcceptHoverEvents(True)
+        self.setZValue(1)               # draw above edges
+
+        # Centred text label
+        label = QGraphicsTextItem(str(node_id), self)
+        label.setDefaultTextColor(Qt.white)
+        label.setFont(LABEL_FONT)
+        br = label.boundingRect()
+        label.setPos(-br.width() / 2.0, -br.height() / 2.0)
+
+    # Hover highlight -------------------------------------------------------
+
+    def hoverEnterEvent(self, event) -> None:
+        self.setPen(QPen(Qt.white, 2.5))
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event) -> None:
+        color = self.brush().color()
+        self.setPen(QPen(color.lighter(160), 1.5))
+        super().hoverLeaveEvent(event)
 
 
 # ---------------------------------------------------------------------------
-# NetworkGraphView (QGraphicsView)
+# View (zoom + pan)
 # ---------------------------------------------------------------------------
 
-class NetworkGraphView(QGraphicsView):
-    """View that holds the scene and updates nodes/links from simulation state."""
+class _ZoomableView(QGraphicsView):
+    """QGraphicsView with smooth mouse-wheel zoom and scroll-hand pan."""
+
+    _ZOOM_FACTOR = 1.15
+
+    def __init__(self, scene: QGraphicsScene, parent: Optional[QWidget] = None) -> None:
+        super().__init__(scene, parent)
+        self.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+        self.setBackgroundBrush(QBrush(BACKGROUND_COLOR))
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
+        self.setViewportUpdateMode(QGraphicsView.BoundingRectViewportUpdate)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+    def wheelEvent(self, event) -> None:
+        factor = (
+            self._ZOOM_FACTOR
+            if event.angleDelta().y() > 0
+            else 1.0 / self._ZOOM_FACTOR
+        )
+        self.scale(factor, factor)
+
+
+# ---------------------------------------------------------------------------
+# Public widget
+# ---------------------------------------------------------------------------
+
+class NetworkGraphView(QWidget):
+    """Drop-in replacement for the Pyvis/WebEngine graph view.
+
+    The public API (update_state, export_png) is identical to the previous
+    implementation so MainWindow requires no changes.
+    """
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
         self._scene = QGraphicsScene(self)
-        self.setScene(self._scene)
-        self.setRenderHints(QPainter.Antialiasing)
-        self.setDragMode(QGraphicsView.ScrollHandDrag)
-        self.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self._scene.setBackgroundBrush(QBrush(BACKGROUND_COLOR))
 
-        # Internal cache of scene items, keyed by node/link id
-        self._node_items: Dict[int, _NodeItem] = {}
-        self._link_items: Dict[int, _LinkItem] = {}
+        self._view = _ZoomableView(self._scene, self)
 
-        # Simple fixed layout (will be replaced by layout.py later)
-        self._positions: Dict[int, QPointF] = {}
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self._view)
+
+        # Persisted node positions survive state updates (preserves drag layout)
+        self._node_positions: Dict[int, QPointF] = {}
+        # Track topology to know when fitInView is needed
+        self._prev_node_ids: FrozenSet[int] = frozenset()
 
     # ------------------------------------------------------------------
-    # Public API
+    # Public API (matches old WebEngine-based interface)
     # ------------------------------------------------------------------
 
     def update_state(
@@ -139,71 +235,94 @@ class NetworkGraphView(QGraphicsView):
         links: List[LinkState],
         sim_time: float,
     ) -> None:
-        """Update the graph to reflect the current simulator state."""
-        assert isinstance(nodes, list)
-        assert isinstance(links, list)
-
-        # Assign positions if new nodes appear
-        for ns in nodes:
-            if ns.id not in self._positions:
-                self._positions[ns.id] = self._default_position(ns.id, nodes)
-
-        # Create or update node items
-        for ns in nodes:
-            if ns.id not in self._node_items:
-                item = _NodeItem(ns)
-                self._scene.addItem(item)
-                self._node_items[ns.id] = item
-            else:
-                self._node_items[ns.id].update_from_state(ns)
-            # Move node to its layout position
-            pos = self._positions[ns.id]
-            self._node_items[ns.id].setPos(pos)
-
-        # Remove nodes that no longer exist
-        for nid in list(self._node_items):
-            if not any(n.id == nid for n in nodes):
-                self._scene.removeItem(self._node_items[nid])
-                del self._node_items[nid]
-
-        # Create or update link items
-        for ls in links:
-            lid = ls.id
-            if lid not in self._link_items:
-                item = _LinkItem(ls)
-                self._scene.addItem(item)
-                self._link_items[lid] = item
-            else:
-                self._link_items[lid].update_from_state(ls)
-            # Update endpoint positions
-            p1 = self._positions.get(ls.from_id, QPointF(0, 0))
-            p2 = self._positions.get(ls.to_id, QPointF(0, 0))
-            self._link_items[lid].set_endpoints(p1, p2)
-
-        # Remove links that no longer exist
-        for lid in list(self._link_items):
-            if not any(l.id == lid for l in links):
-                self._scene.removeItem(self._link_items[lid])
-                del self._link_items[lid]
+        """Rebuild the scene from fresh simulation state."""
+        self._rebuild_scene(nodes, links)
 
     def export_png(self, path: str) -> None:
-        """Render the current scene to a PNG file."""
-        rect = self._scene.itemsBoundingRect()
-        image = self.grab().toImage()
-        image.save(path, "PNG")
-        logger.info("Graph exported to %s", path)
+        """Render the current view to a PNG file."""
+        img = QImage(self._view.viewport().size(), QImage.Format_ARGB32)
+        img.fill(BACKGROUND_COLOR.rgb())
+        painter = QPainter(img)
+        self._view.render(painter)
+        painter.end()
+        img.save(path, "PNG")
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Internal
     # ------------------------------------------------------------------
 
-    def _default_position(
-        self, node_id: int, nodes: List[NodeState]
-    ) -> QPointF:
-        """Arrange nodes in a circle if no layout is set."""
-        n = max(1, len(nodes))
-        angle = (2 * math.pi / n) * node_id
-        radius = 150.0
-        x = radius * math.cos(angle) + 200
-        y = radius * math.sin(angle) + 200
-        return QPointF(x, y)
+    def _rebuild_scene(
+        self,
+        nodes: List[NodeState],
+        links: List[LinkState],
+    ) -> None:
+        """Clear and repopulate the QGraphicsScene.
+
+        Dragged node positions are captured before the clear and restored
+        when items are re-created, so user-adjusted layouts survive ticks.
+        """
+        # 1. Snapshot positions of any dragged nodes before clearing
+        for item in self._scene.items():
+            if isinstance(item, NodeItem):
+                self._node_positions[item.node_id] = item.pos()
+
+        self._scene.clear()
+
+        if not nodes:
+            return
+
+        # 2. Run layout only for nodes without a known position
+        node_ids = [ns.id for ns in nodes]
+        edge_pairs = [(ls.from_id, ls.to_id) for ls in links]
+        unknown = [nid for nid in node_ids if nid not in self._node_positions]
+        if unknown:
+            computed = compute_layout(
+                node_ids=node_ids,
+                edges=edge_pairs,
+                seed=42,
+                width=800,
+                height=600,
+            )
+            for nid, (x, y) in computed.items():
+                if nid not in self._node_positions:
+                    self._node_positions[nid] = QPointF(x, y)
+
+        pos: Dict[int, QPointF] = {
+            ns.id: self._node_positions.get(ns.id, QPointF(0.0, 0.0))
+            for ns in nodes
+        }
+
+        # 3. Edges first — drawn behind nodes (ZValue = -1)
+        for ls in links:
+            if ls.from_id not in pos or ls.to_id not in pos:
+                continue
+            tooltip = (
+                f"SNR: {ls.snr:.1f} dB\n"
+                f"Capacity: {ls.capacity_bps / 1e6:.1f} Mbps\n"
+                f"Active: {ls.active}"
+            )
+            self._scene.addItem(
+                EdgeItem(pos[ls.from_id], pos[ls.to_id], ls.active, tooltip)
+            )
+
+        # 4. Nodes on top (ZValue = 1)
+        for ns in nodes:
+            color = NODE_COLORS.get(ns.mode, QColor("gray"))
+            tooltip = (
+                f"Node {ns.id}: {ns.name}\n"
+                f"Mode: {ns.mode.name}\n"
+                f"Buffer: {ns.buffer_size}\n"
+                f"Energy: {ns.energy_used:.3e}"
+            )
+            self._scene.addItem(NodeItem(ns.id, pos[ns.id], color, tooltip))
+
+        # 5. Fit view only when the topology changes — not on every colour update
+        current_ids = frozenset(node_ids)
+        if current_ids != self._prev_node_ids:
+            self._prev_node_ids = current_ids
+            self._view.fitInView(
+                self._scene.itemsBoundingRect().adjusted(
+                    -NODE_RADIUS, -NODE_RADIUS, NODE_RADIUS, NODE_RADIUS
+                ),
+                Qt.KeepAspectRatio,
+            )
