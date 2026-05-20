@@ -115,3 +115,16 @@ TEST_F(TwoNodeStaticIntegrationTest, EventDiversity_AllTypesAppear) {
     // Note: "ScanStarted" may appear if we logged it in headless, but we haven't
     // implemented that event in the simulator yet. So we relax the check.
 }
+
+// ---------------------------------------------------------------------------
+// 4. Node state: both nodes are present and can be inspected.
+// ---------------------------------------------------------------------------
+TEST_F(TwoNodeStaticIntegrationTest, NodeStates_BothNodesPresent) {
+    auto states = simulator_->getNodeStates();
+    ASSERT_EQ(states.size(), 2);
+    EXPECT_EQ(states[0].id, NodeId{0});
+    EXPECT_EQ(states[1].id, NodeId{1});
+    // Names should be set by simulator
+    EXPECT_FALSE(states[0].name.empty());
+    EXPECT_FALSE(states[1].name.empty());
+}
