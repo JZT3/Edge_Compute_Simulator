@@ -3,12 +3,29 @@
 
 namespace sigint_sim {
 
+// Old constructor – delegates to the new one with defaults
 SDRNode::SDRNode(NodeId id, std::string name, ComputeCapability cap,
                  std::vector<Frequency> bands)
-    : id_(id), name_(std::move(name)), compute_(std::move(cap)), bands_(std::move(bands))
+    : SDRNode(std::move(id), std::move(name), std::move(cap),
+              std::move(bands),
+              0.0, 0.0,                // position (0,0)
+              HardwareProfile{})        // default profile
 {
     assert(!name_.empty() && "Node name must not be empty");
     assert(!bands_.empty() && "Node must support at least one frequency band");
+}
+
+// New constructor – full implementation
+SDRNode::SDRNode(NodeId id, std::string name, ComputeCapability cap,
+                 std::vector<Frequency> bands,
+                 double x, double y,
+                 HardwareProfile profile)
+    : id_(id), name_(std::move(name)), compute_(std::move(cap)),
+      bands_(std::move(bands)), x_(x), y_(y), profile_(std::move(profile))
+{
+    assert(!name_.empty());
+    assert(!bands_.empty());
+    assert(std::isfinite(x_) && std::isfinite(y_));
 }
 
 void SDRNode::applyAction(const Action& action) {
@@ -46,7 +63,9 @@ NodeState SDRNode::getState() const noexcept {
     s.compute = compute_;
     s.buffer_size = buffer_size_;
     s.energy_used = energy_used_;
-    // neighbour beliefs not set in MVP
+    s.x = x_;
+    s.y = y_;
+    // neighbour beliefs not set in MVP maybe in game theory addition
     return s;
 }
 
