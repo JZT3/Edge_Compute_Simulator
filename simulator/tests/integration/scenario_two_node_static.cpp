@@ -93,3 +93,25 @@ TEST_F(TwoNodeStaticIntegrationTest, Determinism_IdenticalLogs) {
         EXPECT_EQ(log1[j].node_id, log2[j].node_id);
     }
 }
+
+// ---------------------------------------------------------------------------
+// 3. Event diversity: over many steps, we should see all major event types.
+// ---------------------------------------------------------------------------
+TEST_F(TwoNodeStaticIntegrationTest, EventDiversity_AllTypesAppear) {
+    // Run for the full duration
+    while (!simulator_->isFinished()) {
+        simulator_->step();
+    }
+
+    const auto& events = simulator_->getEventLog();
+    std::set<std::string> types;
+    for (const auto& ev : events) {
+        types.insert(ev.type);
+    }
+
+    // We expect at least these types (from scanning, transmission attempts)
+    EXPECT_TRUE(types.count("SignalDetected") > 0);
+    EXPECT_TRUE(types.count("TransmissionSuccess") > 0 || types.count("TransmissionFail") > 0);
+    // Note: "ScanStarted" may appear if we logged it in headless, but we haven't
+    // implemented that event in the simulator yet. So we relax the check.
+}
