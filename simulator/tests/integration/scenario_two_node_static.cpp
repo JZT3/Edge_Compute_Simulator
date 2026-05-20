@@ -68,3 +68,28 @@ TEST_F(TwoNodeStaticIntegrationTest, Smoke_RunsWithoutCrash) {
     const auto& events = simulator_->getEventLog();
     EXPECT_GT(events.size(), 0) << "Expected at least one event after 25 steps";
 }
+
+// ---------------------------------------------------------------------------
+// 2. Determinism: two runs with the same seeds produce identical event logs.
+// ---------------------------------------------------------------------------
+TEST_F(TwoNodeStaticIntegrationTest, Determinism_IdenticalLogs) {
+    // Run the current simulator for a few steps and capture the log
+    for (int i = 0; i < 10; ++i) simulator_->step();
+    const auto log1 = simulator_->getEventLog();
+
+    // Build a second, identical simulator
+    Simulator sim2(cfg_);
+    for (int i = 0; i < 2; ++i) {
+        auto agent = std::make_unique<RandomAgent>(cfg_.seed + i * 1000);
+        sim2.setAgent(NodeId{i}, std::move(agent));
+    }
+    for (int i = 0; i < 10; ++i) sim2.step();
+    const auto log2 = sim2.getEventLog();
+
+    ASSERT_EQ(log1.size(), log2.size());
+    for (size_t j = 0; j < log1.size(); ++j) {
+        EXPECT_EQ(log1[j].type, log2[j].type);
+        EXPECT_DOUBLE_EQ(log1[j].time, log2[j].time);
+        EXPECT_EQ(log1[j].node_id, log2[j].node_id);
+    }
+}
