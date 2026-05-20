@@ -234,3 +234,31 @@ TEST_F(SimulatorTest, NoScan_NoSignalDetected) {
         EXPECT_NE(ev.type, "SignalDetected");
     }
 }
+
+// ---------------------------------------------------------------------------
+// 6. Processing: when an agent processes a signal, buffer drains (integration)
+// ---------------------------------------------------------------------------
+
+TEST_F(SimulatorTest, ProcessAfterScan_DrainsBufferAndAddsEvent) {
+    // Step 1: scan to detect signal
+    Action scan;
+    scan.scan_params = RFParams{2.4e9, 20e6, 40.0, 40e6};
+    agent0_->next_action = scan;
+    simulator_->step();   // time 0.1
+
+    // Verify signal detected and node has buffer
+    auto node_states = simulator_->getNodeStates();
+    EXPECT_EQ(node_states[0].buffer_size, 1);
+
+    // Step 2: process the signal
+    Action proc;
+    proc.process_task_ids.push_back(0);
+    agent0_->next_action = proc;
+    simulator_->step();   // time 0.2
+
+    // Buffer should be empty now
+    node_states = simulator_->getNodeStates();
+    EXPECT_EQ(node_states[0].buffer_size, 0);
+    // Energy should have increased
+    EXPECT_GT(node_states[0].energy_used, 0.0);
+}
