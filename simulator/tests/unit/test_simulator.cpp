@@ -1,5 +1,6 @@
 #include "sim/core/simulator.hpp"
 #include "sim/agents/agent_interface.hpp"
+#include "sim/agents/random_agent.hpp"
 #include <gtest/gtest.h>
 #include <memory>
 #include <random>
@@ -127,3 +128,54 @@ TEST_F(SimulatorTest, Step_TenSteps_TimeIncrementsCorrectly) {
     EXPECT_FALSE(simulator_->isFinished());
 }
 
+// ---------------------------------------------------------------------------
+// 3. Determinism – same seed + same agents → identical event log
+// ---------------------------------------------------------------------------
+
+TEST_F(SimulatorTest, Determinism_SameConfigAndAgents_IdenticalEventLog) {
+    Simulator::Config cfg;
+    cfg.seed = 12345;
+    cfg.timestep = 0.1;
+    cfg.duration = 2.0;
+    cfg.topology_edges = {
+        {NodeId{0}, NodeId{1}},
+        {NodeId{1}, NodeId{0}}
+    };
+
+    BlockFadingChannel::Params ch_params;
+    ch_params.availability = 0.8;
+    ch_params.avg_snr_db = 20.0;
+    ch_params.snr_std_db = 5.0;
+    ch_params.outage_snr_db = -10.0;
+    ch_params.bandwidth = 10e6;
+    cfg.channel = std::make_shared<BlockFadingChannel>(ch_params);
+
+    Simulator simA(cfg);
+    Simulator simB(cfg);
+
+    // Attach identical RandomAgents to both sims
+    for (int i = 0; i < 2; ++i) {
+        auto ag = std::make_unique<RandomAgent>(12345 + i * 100);
+        simA.setAgent(NodeId{i}, std::move(ag));
+    }
+    for (int i = 0; i < 2; ++i) {
+        auto ag = std::make_unique<RandomAgent>(12345 + i * 100);
+        simB.setAgent(NodeId{i}, std::move(ag));
+    }
+
+    // Run 15 steps on both
+    for (int step = 0; step < 15; ++step) {
+        simA.step();
+        simB.step();
+    }
+
+    const auto& logA = simA.getEventLog();
+    const auto& logB = simB.getEventLog();
+    ASSERT_EQ(logA.size(), logB.size());
+    for (size_t i = 0; i < logA.size(); ++i) {
+        EXPECT_EQ(logA[i].type, logB[i].type);
+        EXPECT_DOUBLE_EQ(logA[i].time, logB[i].time);
+        EXPECT_EQ(logA[i].node_id, logB[i].node_id);
+        EXPECT_EQ(logA[i].params.size(), logB[i].params.size());
+    }
+}
