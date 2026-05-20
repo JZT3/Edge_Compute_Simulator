@@ -103,3 +103,27 @@ TEST(SimulatorDeathTest, Constructor_NullChannel_Asserts) {
     // channel left as nullptr
     EXPECT_DEATH(Simulator sim(cfg), "Channel model must not be null");
 }
+
+// ---------------------------------------------------------------------------
+// 2. Basic stepping – events logged, time advances, agents called
+// ---------------------------------------------------------------------------
+
+TEST_F(SimulatorTest, Step_AdvancesTimeAndCallsAgent) {
+    // Initially agent has default action (silent)
+    simulator_->step();
+
+    EXPECT_DOUBLE_EQ(simulator_->currentTime(), 0.1);
+    // Each agent should have been called once
+    EXPECT_EQ(agent0_->last_my_state.size(), 1);
+    EXPECT_EQ(agent1_->last_my_state.size(), 1);
+    // Events: no signal, no transmission → only ScanStarted? Not necessarily, depends on action.
+}
+
+TEST_F(SimulatorTest, Step_TenSteps_TimeIncrementsCorrectly) {
+    for (int i = 0; i < 10; ++i) {
+        simulator_->step();
+    }
+    EXPECT_DOUBLE_EQ(simulator_->currentTime(), 1.0);
+    EXPECT_FALSE(simulator_->isFinished());
+}
+
