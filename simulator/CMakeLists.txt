@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(sigint_sim LANGUAGES CXX)
 
+option(BUILD_BINDINGS "Build Python pybind11 bindings" OFF)
+
 # ---- C++ Standard and Compiler Options ----
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -122,6 +124,10 @@ add_custom_target(check
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
     DEPENDS unit_tests integration_tests regression_tests
 )
+
+if(BUILD_BINDINGS)
+    add_subdirectory(bindings)
+endif()
 
 # ---- (Optional) Sphinx documentation target ----
 # find_package(Sphinx)
