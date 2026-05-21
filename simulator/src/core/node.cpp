@@ -42,7 +42,7 @@ void SDRNode::applyAction(const Action& action) {
     if (!action.process_task_ids.empty()) {
         mode_ = NodeMode::PROCESS;
     }
-    if (action.burst && radio_) {
+    if (action.burst) {
         mode_ = NodeMode::TRANSMIT;
         // Generate a short pilot burst (100 samples of 1+0j)
         std::vector<std::complex<float>> burst(100, {1.0f, 0.0f});
