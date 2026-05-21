@@ -11,3 +11,9 @@ TEST(PhyMath, FriisPathLoss_DistanceDependence) {
     EXPECT_LE(loss1, 1.0);                 // gain ≤ 1
     EXPECT_GT(loss1, 0.0);
 }
+
+TEST(PhyMath, ThermalNoise_BasicSanity) {
+    double noise = thermal_noise_power_W(10e6, 0.0);
+    EXPECT_GT(noise, 0.0);
+    EXPECT_LT(noise, 1e-10);              // plausible noise floor
+}
