@@ -79,7 +79,7 @@ target_link_libraries(headless_run PRIVATE sigint_sim_core)
 # =============================================================================
 enable_testing()
 
-# ---- Unit Tests (no GNU Radio dependency) ----------------------------------
+# ---- Unit Tests ------------------------------------------------------------
 set(UNIT_TEST_SOURCES
     tests/unit/test_channel.cpp
     tests/unit/test_node.cpp
@@ -117,7 +117,7 @@ add_test(NAME FidelityTests COMMAND fidelity_tests)
 
 add_custom_target(check
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-    DEPENDS ${ALL_TEST_TARGETS}
+    DEPENDS unit_tests integration_tests regression_tests fidelity_tests
 )
 
 # =============================================================================
@@ -134,7 +134,20 @@ message(STATUS "")
 message(STATUS "=== Build Configuration Summary ===")
 message(STATUS "CMAKE_BUILD_TYPE : ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ Standard     : ${CMAKE_CXX_STANDARD}")
+message(STATUS "Compiler         : ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "BUILD_BINDINGS   : ${BUILD_BINDINGS}")
-message(STATUS "ENABLE_GNURADIO  : ${ENABLE_GNURADIO}")
-message(STATUS "ENABLE_SOAPY     : ${ENABLE_SOAPY}")
+
+message(STATUS "Test targets:")
+if(TARGET unit_tests)
+    message(STATUS "  - unit_tests")
+endif()
+if(TARGET integration_tests)
+    message(STATUS "  - integration_tests")
+endif()
+if(TARGET regression_tests)
+    message(STATUS "  - regression_tests")
+endif()
+if(TARGET fidelity_tests)
+    message(STATUS "  - fidelity_tests")
+endif()
 message(STATUS "===================================")
