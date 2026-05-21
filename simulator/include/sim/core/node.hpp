@@ -1,6 +1,10 @@
 #pragma once
 #include "types.hpp"
 #include "hardware_profile.hpp"
+#include "radio_interface.hpp"
+#include "signal_processor.hpp"
+#include <complex>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -8,15 +12,19 @@ namespace sigint_sim {
 
 class SDRNode {
 public:
-     // Old constructor (kept for backward compatibility)
+    // Original constructor (backward‑compatible)
     SDRNode(NodeId id, std::string name, ComputeCapability cap,
             std::vector<Frequency> bands);
 
-    // New constructor with position & profile
+    // Extended constructor with position and profile
     SDRNode(NodeId id, std::string name, ComputeCapability cap,
             std::vector<Frequency> bands,
             double x, double y,
-            HardwareProfile profile);
+            HardwareProfile profile,
+            uint64_t seed = 0);
+
+    // Inject a radio (called by Simulator after both are created)
+    void setRadio(std::unique_ptr<IRadio> radio);
 
     // Apply an action for this timestep
     void applyAction(const Action& action);
@@ -24,16 +32,27 @@ public:
     // Update internal processing simulation for dt seconds
     void updateProcessing(double dt);
 
+    // Collect IQ samples from the radio (called once per step)
+    void collectRxSamples();
+
+    // Inject a synthetic signal directly into rx_samples_ (for MVP sensing)
+    void injectSyntheticSignal(const std::vector<std::complex<float>>& iq,
+                               double snr_linear);
+
     // Get a read‑only snapshot of the current state
     [[nodiscard]] NodeState getState() const noexcept;
 
-    // Inject a synthetic signal detection (MVP only).
+    // Inject a simple signal detection (MVP fallback)
     void setSignalDetected(bool detected) noexcept;
 
-    // Getters
+    // Accessors
     [[nodiscard]] NodeId id() const noexcept { return id_; }
     [[nodiscard]] const std::string& name() const noexcept { return name_; }
     [[nodiscard]] ComputeCapability computeCap() const noexcept { return compute_; }
+    [[nodiscard]] double posX() const noexcept { return x_; }
+    [[nodiscard]] double posY() const noexcept { return y_; }
+    [[nodiscard]] const HardwareProfile& profile() const noexcept { return profile_; }
+    [[nodiscard]] IRadio* radio() noexcept { return radio_.get(); }
 
 private:
     NodeId id_;
@@ -44,16 +63,15 @@ private:
     RFParams current_rf_;
     int buffer_size_ = 0;
     double energy_used_ = 0.0;
-    // In MVP, no complex queue yet; just a flag indicating if we have unprocessed data
     bool has_unprocessed_signal_ = false;
 
-public:
-    // Getters for position
-    [[nodiscard]] double posX() const noexcept { return x_; }
-    [[nodiscard]] double posY() const noexcept { return y_; }
-    [[nodiscard]] const HardwareProfile& profile() const noexcept { return profile_; }
+    // --- New PHY members ---
+    std::unique_ptr<IRadio> radio_;
+    SignalProcessor signal_processor_;
+    std::vector<std::complex<float>> rx_samples_;
+    double last_snr_linear_ = 0.0;
+    std::mt19937 rng_;                     // per‑node RNG for processing
 
-private:
     double x_ = 0.0;
     double y_ = 0.0;
     HardwareProfile profile_;
