@@ -12,21 +12,27 @@
 
 namespace sigint_sim {
 
+// Forward declaration
+class SampleProcessingChannel;
+
 class Simulator {
 public:
     struct Config {
         uint64_t seed;
         double timestep = 0.1;
         double duration = 10.0;
-        std::vector<std::pair<NodeId,NodeId>> topology_edges; // directed
+        std::vector<std::pair<NodeId, NodeId>> topology_edges;
         std::shared_ptr<ChannelModel> channel;
+
+        // Optional per‑node data for the new PHY
+        std::unordered_map<int, HardwareProfile> node_profiles;
+        std::unordered_map<int, std::pair<double, double>> node_positions;
     };
 
     explicit Simulator(Config config);
     void step();
     void reset(uint64_t new_seed);
 
-    // Attach an agent to a node (must be called before stepping).
     void setAgent(NodeId id, std::unique_ptr<IAgent> agent);
 
     [[nodiscard]] std::vector<NodeState> getNodeStates() const;
@@ -44,11 +50,11 @@ private:
     std::mt19937 rng_;
     TimePoint current_time_ = 0.0;
     EventLog event_log_;
+    std::unordered_map<int, std::unique_ptr<IAgent>> agents_;
 
     void logEvent(Event e);
-
-    // Agent lookup
-    std::unordered_map<int, std::unique_ptr<IAgent>> agents_; // key = node id as int
+    void prepareChannelParams();
+    SDRNode* getNodeById(int id);
 };
 
 } // namespace sigint_sim
