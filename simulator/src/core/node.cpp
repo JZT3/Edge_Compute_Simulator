@@ -1,4 +1,5 @@
 #include "../include/sim/core/node.hpp"
+#include "../include/sim/logging/logger.hpp"
 #include <cassert>
 #include <cmath>
 
@@ -35,21 +36,46 @@ void SDRNode::setRadio(std::unique_ptr<IRadio> radio) {
 // ---- Action application ----
 void SDRNode::applyAction(const Action& action) {
     mode_ = NodeMode::IDLE;
+
+    // SCAN
     if (action.scan_params) {
         mode_ = NodeMode::SCAN;
         current_rf_ = *action.scan_params;
     }
+
+    // PROCESS
     if (!action.process_task_ids.empty()) {
         mode_ = NodeMode::PROCESS;
     }
+
+    // TRANSMIT
     if (action.burst) {
         mode_ = NodeMode::TRANSMIT;
-        // Generate a short pilot burst (100 samples of 1+0j)
-        std::vector<std::complex<float>> burst(100, {1.0f, 0.0f});
-        double freq = current_rf_.center_freq > 0.0 ? current_rf_.center_freq : 2.4e9;
-        double rate = current_rf_.sample_rate > 0.0 ? current_rf_.sample_rate : 1e6;
-        radio_->transmit(burst, freq, rate);
-        energy_used_ += 0.001 * 1e-3;  // placeholder TX energy
+
+        // Safety: copy the burst so we don't read a dangling optional
+        const Action::Burst& burst = *action.burst;
+
+        if (radio_) {
+            // Use valid frequencies; default to 2.4 GHz / 1 MHz if nothing set
+            double freq = (current_rf_.center_freq > 0.0) ? current_rf_.center_freq : 2.4e9;
+            double rate = (current_rf_.sample_rate > 0.0)   ? current_rf_.sample_rate   : 1e6;
+
+            // Create a simple pilot burst
+            std::vector<std::complex<float>> samples(100, {1.0f, 0.0f});
+
+            // Diagnostic (remove after debugging)
+            Logger::get()->debug(
+                "Node {} transmitting {} samples on freq {:.1f} MHz rate {:.1f} MHz -> node {}",
+                static_cast<int>(id_), samples.size(), freq/1e6, rate/1e6, burst.target_node_id
+            );
+
+            try {
+                radio_->transmit(samples, freq, rate);
+            } catch (const std::exception& e) {
+                Logger::get()->error("Node {} transmit failed: {}", static_cast<int>(id_), e.what());
+            }
+            energy_used_ += 0.001 * 1e-3;   // placeholder TX energy
+        }
     }
 }
 
