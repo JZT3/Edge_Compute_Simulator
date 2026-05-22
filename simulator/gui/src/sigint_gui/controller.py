@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PyQt5.QtCore import QMutex, QObject, QThread, QTimer, pyqtSignal
+from PyQt5.QtCore import QMutex, QMutexLocker, QObject, QThread, pyqtSignal
 
 from .models import LinkState, NodeState, SimulatorConfig
 from .simulator_wrapper import Simulator
@@ -26,6 +26,7 @@ class _SimulationWorker(QObject):
     state_ready = pyqtSignal(list, list, float)  # nodes, links, sim_time
     finished = pyqtSignal()
     error_occurred = pyqtSignal(str)
+    metrics_ready = pyqtSignal(dict)  
 
     def __init__(self, sim: Simulator, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -39,21 +40,21 @@ class _SimulationWorker(QObject):
     # ------------------------------------------------------------------
 
     def request_play(self) -> None:
-        with QMutex.locker(self._mutex):
+        with QMutexLocker(self._mutex):
             self._running = True
 
     def request_pause(self) -> None:
-        with QMutex.locker(self._mutex):
+        with QMutexLocker(self._mutex):
             self._running = False
 
     def set_interval(self, ms: int) -> None:
         """Set the delay between simulation steps (clamped)."""
         ms = max(MIN_SPEED_MS, min(MAX_SPEED_MS, ms))
-        with QMutex.locker(self._mutex):
+        with QMutexLocker(self._mutex):
             self._step_interval_ms = ms
 
     def is_running(self) -> bool:
-        with QMutex.locker(self._mutex):
+        with QMutexLocker(self._mutex):
             return self._running
 
     # ------------------------------------------------------------------
@@ -66,7 +67,7 @@ class _SimulationWorker(QObject):
 
         while True:
             # Check if we should keep running
-            with QMutex.locker(self._mutex):
+            with QMutexLocker(self._mutex):
                 running = self._running
                 interval = self._step_interval_ms
 
@@ -106,11 +107,14 @@ class _SimulationWorker(QObject):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-
     def _emit_state(self) -> None:
         nodes = self._sim.get_node_states()
         links = self._sim.get_link_states()
         self.state_ready.emit(nodes, links, self._sim.current_time)
+        
+        metrics = self._sim.get_metrics()  # dict
+        self.metrics_ready.emit(metrics)
+
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +133,7 @@ class SimulatorController(QObject):
     state_updated = pyqtSignal(list, list, float)
     finished = pyqtSignal()
     error_occurred = pyqtSignal(str)
+    metrics_updated = pyqtSignal(dict)
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -139,6 +144,10 @@ class SimulatorController(QObject):
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
+
+    @property
+    def sim(self):
+        return self._sim
 
     def load_scenario(self, config: SimulatorConfig) -> None:
         """Create a new simulator and prepare the worker thread.
@@ -172,6 +181,8 @@ class SimulatorController(QObject):
         self._worker.error_occurred.connect(self._on_error)
         self._worker.state_ready.connect(self._on_state_ready)
         self._thread.finished.connect(self._thread.deleteLater)
+        
+        self._worker.metrics_ready.connect(self.metrics_updated)   # relay
 
         self._thread.start()
 
