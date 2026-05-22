@@ -63,6 +63,7 @@ set(CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/signal_processor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/sample_processing_channel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/radio_interface.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/scenario_loader.cpp 
 )
 
 add_library(sigint_sim_core STATIC ${CORE_SOURCES})
@@ -74,6 +75,7 @@ target_include_directories(sigint_sim_core
 )
 
 target_link_libraries(sigint_sim_core PUBLIC spdlog::spdlog)
+target_link_libraries(sigint_sim_core PUBLIC nlohmann_json::nlohmann_json)
 target_compile_features(sigint_sim_core PUBLIC cxx_std_23)
 target_compile_options(sigint_sim_core PRIVATE -Wall -Wextra -Wpedantic)
 
