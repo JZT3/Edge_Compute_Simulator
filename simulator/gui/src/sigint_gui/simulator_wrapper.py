@@ -1,4 +1,4 @@
-"""Pythonic wrapper around the native _sigint_sim_core extension."""
+"""Wrapper around the native _sigint_sim_core extension."""
 
 from __future__ import annotations
 
@@ -220,3 +220,31 @@ class Simulator:
         # We only convert the slice since the last known index.
         new_raw = raw_events[len(self._event_log):]
         return [_event_from_cpp(e) for e in new_raw]
+    
+    def get_metrics(self) -> dict:
+        assert self._native is not None
+        return self._native.get_current_metrics()
+
+    def get_metrics_history(self) -> list:
+        assert self._native is not None
+        return self._native.get_metrics_history()
+    
+    @classmethod
+    def from_scenario(cls, json_path: str, attach_random_agents: bool = True) -> "Simulator":
+        """Create a Simulator from a JSON scenario file."""
+        from sigint_gui import _sigint_sim_core as _core
+        native_sim = _core.load_scenario(json_path)
+        # native_sim is a Simulator object
+        wrapper = cls.__new__(cls)
+        wrapper._native = native_sim
+        wrapper._event_log = []
+        wrapper._config = None  # not needed
+        wrapper._metrics_history = []  # we'll populate ourselves
+        if attach_random_agents:
+            # Determine number of nodes from topology (we need node count)
+            # We can get it from the native simulator: get_node_states()
+            n_nodes = len(wrapper.get_node_states())
+            for i in range(n_nodes):
+                agent = _core.RandomAgent(12345 + i * 1000)  # need to expose RandomAgent in bindings
+                native_sim.setAgent(NodeId(i), agent)
+        return wrapper
