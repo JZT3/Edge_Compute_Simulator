@@ -47,10 +47,17 @@ class Event:
 
 @dataclass(frozen=True)
 class SimulatorConfig:
-    """High‑level configuration for a simulation run."""
     seed: int = 42
     duration: float = 10.0
     topology: List[Tuple[int, int]] = field(default_factory=lambda: [(0, 1), (1, 0)])
     availability: float = 0.9
     avg_snr_db: float = 20.0
     timestep: float = 0.1
+
+    def topology_nodes(self) -> List[int]:
+        """Return all unique node IDs present in the topology edges."""
+        ids = set()
+        for u, v in self.topology:
+            ids.add(u)
+            ids.add(v)
+        return sorted(ids)
