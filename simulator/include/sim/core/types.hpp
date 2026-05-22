@@ -67,6 +67,9 @@ struct NodeState {
     int buffer_size = 0;
     double energy_used = 0.0;
     std::unordered_map<int, double> neighbor_availability_belief; // node_id -> probability
+    double tx_power_dbm = 20.0;   // per‑node quality (higher → longer range)
+    double x = 0.0;  // meters
+    double y = 0.0;  // meters
 };
 
 // Link state snapshot
@@ -81,14 +84,23 @@ struct LinkState {
     bool active = false;
 };
 
-// Event log entry (variant later, for now simple struct)
+// Events
 struct Event {
     TimePoint time;
-    int node_id = -1;   // or NodeId
+    int node_id = -1;
     std::string type;
     std::unordered_map<std::string, double> params;
 };
-
 using EventLog = std::vector<Event>;
+
+struct EmitterDesc {
+    int id;
+    double frequency_Hz;
+    double bandwidth_Hz;
+    int priority;
+    std::string modulation;
+    double active_start_s;
+    double active_end_s;
+};
 
 } // namespace sigint_sim

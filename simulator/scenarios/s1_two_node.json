@@ -1,0 +1,45 @@
+{
+    "seed": 12345,
+    "timestep": 0.1,
+    "duration": 10.0,
+    "topology_edges": [[0, 1], [1, 0]],
+    "channel_type": "SampleProcessing",
+    "channel_params": {
+        "bandwidth_Hz": 1e6,
+        "snr_threshold_dB": 5.0,
+        "ber_threshold": 1e-3
+    },
+    "node_profiles": {
+        "0": {
+            "type": "RTL_SDR",
+            "noise_figure_dB": 15.0,
+            "tx_power_dBm": 10.0,
+            "frequency_accuracy_ppm": 10.0,
+            "fft_gflops_per_sec": 0.5,
+            "memory_mib": 256.0
+        },
+        "1": {
+            "type": "USRP_B2XX",
+            "noise_figure_dB": 5.0,
+            "tx_power_dBm": 20.0,
+            "frequency_accuracy_ppm": 1.0,
+            "fft_gflops_per_sec": 5.0,
+            "memory_mib": 1024.0
+        }
+    },
+    "node_positions": {
+        "0": [0.0, 0.0],
+        "1": [1.0, 0.0]
+    },
+    "emitters": [
+        {
+            "id": 0,
+            "frequency_Hz": 2.4e9,
+            "bandwidth_Hz": 100e3,
+            "priority": 5,
+            "modulation": "qpsk",
+            "active_start_s": 0.0,
+            "active_end_s": 5.0
+        }
+    ]
+}

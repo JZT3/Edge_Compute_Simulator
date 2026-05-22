@@ -6,13 +6,13 @@ namespace sigint_sim {
 class Link {
 public:
     Link(LinkId id, NodeId from, NodeId to, Frequency band_center);
-
     void updateFromChannel(double snr, double capacity, double outage_prob, bool active);
 
     [[nodiscard]] LinkState getState() const noexcept;
     [[nodiscard]] LinkId id() const noexcept { return id_; }
     [[nodiscard]] NodeId from() const noexcept { return from_; }
     [[nodiscard]] NodeId to() const noexcept { return to_; }
+    [[nodiscard]] Frequency band_center() const noexcept { return band_center_; } 
 
 private:
     LinkId id_;

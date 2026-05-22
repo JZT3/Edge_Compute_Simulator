@@ -4,7 +4,7 @@
 #include "link.hpp"
 #include "channel_model.hpp"
 #include "../include/sim/agents/agent_interface.hpp"
-#include "event.hpp"
+#include "metrics.hpp"
 #include <memory>
 #include <vector>
 #include <random>
@@ -12,21 +12,27 @@
 
 namespace sigint_sim {
 
+// Forward declaration
+class SampleProcessingChannel;
+
 class Simulator {
 public:
     struct Config {
         uint64_t seed;
         double timestep = 0.1;
         double duration = 10.0;
-        std::vector<std::pair<NodeId,NodeId>> topology_edges; // directed
+        std::vector<std::pair<NodeId, NodeId>> topology_edges;
         std::shared_ptr<ChannelModel> channel;
+
+        // Optional per‑node data for the new PHY
+        std::unordered_map<int, HardwareProfile> node_profiles;
+        std::unordered_map<int, std::pair<double, double>> node_positions;
     };
 
     explicit Simulator(Config config);
     void step();
     void reset(uint64_t new_seed);
 
-    // Attach an agent to a node (must be called before stepping).
     void setAgent(NodeId id, std::unique_ptr<IAgent> agent);
 
     [[nodiscard]] std::vector<NodeState> getNodeStates() const;
@@ -44,11 +50,23 @@ private:
     std::mt19937 rng_;
     TimePoint current_time_ = 0.0;
     EventLog event_log_;
+    std::unordered_map<int, std::unique_ptr<IAgent>> agents_;
+    std::unordered_map<int, Action> last_actions_;   // Tracks the last action chosen by each node (key = int node id)
 
     void logEvent(Event e);
+    void prepareChannelParams();
+    SDRNode* getNodeById(int id);
 
-    // Agent lookup
-    std::unordered_map<int, std::unique_ptr<IAgent>> agents_; // key = node id as int
+public:
+    const StepMetrics&    getCurrentMetrics() const noexcept { return current_metrics_; }
+    const MetricsHistory& getMetricsHistory() const noexcept { return metrics_history_; }
+    void setEmitters(const std::vector<EmitterDesc>& emitters) { emitters_ = emitters; }
+
+private:
+    StepMetrics    current_metrics_;
+    MetricsHistory metrics_history_;
+    std::vector<EmitterDesc> emitters_;   // active emitter descriptions
+
 };
 
 } // namespace sigint_sim

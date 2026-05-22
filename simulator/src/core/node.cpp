@@ -1,42 +1,132 @@
 #include "../include/sim/core/node.hpp"
+#include "../include/sim/logging/logger.hpp"
 #include <cassert>
+#include <cmath>
 
 namespace sigint_sim {
 
+// ---- Original constructor (delegates to extended) ----
 SDRNode::SDRNode(NodeId id, std::string name, ComputeCapability cap,
                  std::vector<Frequency> bands)
-    : id_(id), name_(std::move(name)), compute_(std::move(cap)), bands_(std::move(bands))
+    : SDRNode(std::move(id), std::move(name), std::move(cap),
+              std::move(bands), 0.0, 0.0, HardwareProfile{}, 0)
+{
+}
+
+// ---- Extended constructor ----
+SDRNode::SDRNode(NodeId id, std::string name, ComputeCapability cap,
+                 std::vector<Frequency> bands,
+                 double x, double y,
+                 HardwareProfile profile,
+                 uint64_t seed)
+    : id_(std::move(id)), name_(std::move(name)), compute_(std::move(cap)),
+      bands_(std::move(bands)), x_(x), y_(y), profile_(std::move(profile)),
+      rng_(seed)
 {
     assert(!name_.empty() && "Node name must not be empty");
     assert(!bands_.empty() && "Node must support at least one frequency band");
+    assert(std::isfinite(x_) && std::isfinite(y_));
 }
 
+// ---- Radio injection ----
+void SDRNode::setRadio(std::unique_ptr<IRadio> radio) {
+    radio_ = std::move(radio);
+}
+
+// ---- Action application ----
 void SDRNode::applyAction(const Action& action) {
-    // Reset mode before applying the new action
     mode_ = NodeMode::IDLE;
+
+    // SCAN
     if (action.scan_params) {
         mode_ = NodeMode::SCAN;
         current_rf_ = *action.scan_params;
     }
+
+    // PROCESS
     if (!action.process_task_ids.empty()) {
         mode_ = NodeMode::PROCESS;
     }
+
+    // TRANSMIT
     if (action.burst) {
         mode_ = NodeMode::TRANSMIT;
-        // Burst target and phy are stored in the action but resolution happens in simulator.
+
+        // Safety: copy the burst so we don't read a dangling optional
+        const Action::Burst& burst = *action.burst;
+
+        if (radio_) {
+            // Use valid frequencies; default to 2.4 GHz / 1 MHz if nothing set
+            double freq = (current_rf_.center_freq > 0.0) ? current_rf_.center_freq : 2.4e9;
+            double rate = (current_rf_.sample_rate > 0.0)   ? current_rf_.sample_rate   : 1e6;
+
+            // Create a simple pilot burst
+            std::vector<std::complex<float>> samples(100, {1.0f, 0.0f});
+
+            // Diagnostic (remove after debugging)
+            Logger::get()->debug(
+                "Node {} transmitting {} samples on freq {:.1f} MHz rate {:.1f} MHz -> node {}",
+                static_cast<int>(id_), samples.size(), freq/1e6, rate/1e6, burst.target_node_id
+            );
+
+            try {
+                radio_->transmit(samples, freq, rate);
+            } catch (const std::exception& e) {
+                Logger::get()->error("Node {} transmit failed: {}", static_cast<int>(id_), e.what());
+            }
+            energy_used_ += 0.001 * 1e-3;   // placeholder TX energy
+        }
     }
-    // If nothing is set, node remains IDLE.
 }
 
+// ---- Processing update ----
 void SDRNode::updateProcessing(double dt) {
-    if (mode_ == NodeMode::PROCESS && has_unprocessed_signal_) {
-        // Simple placeholder: processing finishes instantly.
-        energy_used_ += compute_.fft_ops_per_sec * dt * 1e-6;  // energy in micro-joules
+    // If we have real IQ samples, use the signal processor
+    if (mode_ == NodeMode::PROCESS && !rx_samples_.empty()) {
+        SignalTask task;
+        task.type = SignalTaskType::DETECT;
+        task.center_freq_hz = current_rf_.center_freq > 0.0 ? current_rf_.center_freq : 2.4e9;
+        task.bandwidth_hz   = current_rf_.bandwidth > 0.0   ? current_rf_.bandwidth   : 1e6;
+        task.duration_s     = dt;
+
+        TaskResult res = signal_processor_.execute(task, last_snr_linear_,
+                                                   profile_, rng_);
+        buffer_size_ = static_cast<int>(res.data.size());
+        energy_used_ += res.energy_joules;
+        rx_samples_.clear();
         has_unprocessed_signal_ = false;
-        buffer_size_ = 0; // This makes the buffer state consistent: a signal detection sets the buffer, and processing clears it.
+        return;
+    }
+
+    // Fallback for the old synthetic‑signal path
+    if (mode_ == NodeMode::PROCESS && has_unprocessed_signal_) {
+        energy_used_ += compute_.fft_ops_per_sec * dt * 1e-6;
+        has_unprocessed_signal_ = false;
+        buffer_size_ = 0;
     }
 }
 
+// ---- Radio samples collection ----
+void SDRNode::collectRxSamples() {
+    if (radio_) {
+        double freq = current_rf_.center_freq > 0.0 ? current_rf_.center_freq : 2.4e9;
+        double rate = current_rf_.sample_rate > 0.0 ? current_rf_.sample_rate : 1e6;
+        rx_samples_ = radio_->receive(freq, rate, 0.0);
+        // The radio is expected to store the SNR of the last successful receive.
+        // We retrieve it via a dedicated method (to be added to IRadio or VirtualRadio).
+        // For now we keep last_snr_linear_ from a separate update.
+    }
+}
+
+// ---- Synthetic signal injection ----
+void SDRNode::injectSyntheticSignal(const std::vector<std::complex<float>>& iq,
+                                    double snr_linear) {
+    rx_samples_ = iq;
+    last_snr_linear_ = snr_linear;
+    has_unprocessed_signal_ = true;
+}
+
+// ---- State snapshot ----
 NodeState SDRNode::getState() const noexcept {
     NodeState s;
     s.id = id_;
@@ -46,14 +136,16 @@ NodeState SDRNode::getState() const noexcept {
     s.compute = compute_;
     s.buffer_size = buffer_size_;
     s.energy_used = energy_used_;
-    // neighbour beliefs not set in MVP
+    s.x = x_;
+    s.y = y_;
     return s;
 }
 
+// ---- Simple signal detection (old interface) ----
 void SDRNode::setSignalDetected(bool detected) noexcept {
     has_unprocessed_signal_ = detected;
-    if (detected) buffer_size_ = 1;   // minimal buffer model
-    else buffer_size_ = 0;
+    if (detected) buffer_size_ = 1;
+    else          buffer_size_ = 0;
 }
 
 } // namespace sigint_sim

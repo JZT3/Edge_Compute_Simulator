@@ -58,4 +58,28 @@ private:
     Params params_;
 };
 
+class DistanceAwareChannel : public ChannelModel {
+public:
+    struct Params {
+        double frequency_MHz = 2400.0;       // center frequency of links
+        double bandwidth_Hz = 10e6;
+        double shadowing_std_dB = 3.0;       // lognormal shadowing sigma
+        double snr_threshold_dB = 5.0;       // SNR below which link is considered down
+    };
+
+    explicit DistanceAwareChannel(Params p) noexcept : params_(p) {}
+
+    void update(std::vector<LinkState>& links,
+                const std::vector<NodeState>& nodes,
+                std::mt19937& rng) override;
+
+    [[nodiscard]] std::string name() const override { return "DistanceAware"; }
+
+private:
+    Params params_;
+    static double computeSNR(double distance_m, double noise_figure_dB,
+                             double tx_power_dBm, double freq_MHz, double bandwidth_Hz,
+                             double shadowing_std_dB, std::mt19937& rng);
+};
+
 } // namespace sigint_sim

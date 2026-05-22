@@ -256,9 +256,9 @@ TEST_F(SimulatorTest, ProcessAfterScan_DrainsBufferAndAddsEvent) {
     agent0_->next_action = proc;
     simulator_->step();   // time 0.2
 
-    // Buffer should be empty now
+    // the new SignalProcessor, a DETECT task produces 1 byte of output data (a classification result)
     node_states = simulator_->getNodeStates();
-    EXPECT_EQ(node_states[0].buffer_size, 0);
+    EXPECT_EQ(node_states[0].buffer_size, 1);
     // Energy should have increased
     EXPECT_GT(node_states[0].energy_used, 0.0);
 }
