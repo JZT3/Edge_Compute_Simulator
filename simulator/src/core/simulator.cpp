@@ -3,9 +3,11 @@
 #include "../include/sim/logging/logger.hpp"
 #include "../include/sim/core/sample_processing_channel.hpp"
 #include "../include/sim/core/virtual_radio.hpp"
+#include "../include/sim/core/metrics.hpp"
 #include <cassert>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 
 namespace sigint_sim {
 
@@ -89,6 +91,7 @@ void Simulator::setAgent(NodeId id, std::unique_ptr<IAgent> agent) {
 // ---- Step ----
 void Simulator::step() {
     if (isFinished()) return;
+    auto t_start = std::chrono::steady_clock::now();
 
     // 0. Prepare per‑link parameters for sample‑processing channel
     prepareChannelParams();
@@ -123,26 +126,34 @@ void Simulator::step() {
         Action action = it->second->selectAction(node_states[i], node_states,
                                                  latest_link_states, event_log_);
         node->applyAction(action);
+        last_actions_[static_cast<int>(node->id())] = action;
+
     }
 
-    // 5. Simulate sensing (hardcoded emitter, but inject synthetic IQ for new PHY)
-    if (current_time_ < 5.0) {
-        for (auto& node : nodes_) {
-            if (node->getState().mode == NodeMode::SCAN) {
-                if (node->getState().current_rf.center_freq > 2.3e9 &&
-                    node->getState().current_rf.center_freq < 2.5e9) {
-                    // Old notification path
-                    node->setSignalDetected(true);
-                    // Inject synthetic IQ for the signal processor
-                    std::vector<std::complex<float>> fake_signal(100, {1.0f, 0.0f});
-                    node->injectSyntheticSignal(fake_signal, 15.0); // SNR ≈ 15 dB
-                    Event ev;
-                    ev.time = current_time_;
-                    ev.node_id = static_cast<int>(node->id());
-                    ev.type = "SignalDetected";
-                    ev.params["frequency"] = 2.4e9;
-                    ev.params["snr"] = 15.0;
-                    logEvent(ev);
+// ---- 5. Sensing (hardcoded emitter replaced by scenario emitters) ----
+    // We'll iterate over emitters_ (a new member std::vector<EmitterDesc> emitters_)
+    for (const auto& emitter : emitters_) {
+        if (current_time_ >= emitter.active_start_s && current_time_ <= emitter.active_end_s) {
+            for (auto& node : nodes_) {
+                if (node->getState().mode == NodeMode::SCAN) {
+                    // check frequency coverage (simplified: if center freq within 1% of emitter freq)
+                    double node_freq = node->getState().current_rf.center_freq;
+                    if (std::abs(node_freq - emitter.frequency_Hz) / emitter.frequency_Hz < 0.01) {
+                        node->setSignalDetected(true);
+                        // inject synthetic IQ
+                        std::vector<std::complex<float>> fake_signal(100, {1.0f, 0.0f});
+                        double snr_linear = 15.0; // could compute from channel, but simplified
+                        node->injectSyntheticSignal(fake_signal, snr_linear);
+                        // intelligence gain: add emitter priority
+                        current_metrics_.cumulative_intelligence += emitter.priority;
+                        Event ev;
+                        ev.time = current_time_;
+                        ev.node_id = static_cast<int>(node->id());
+                        ev.type = "SignalDetected";
+                        ev.params["frequency"] = emitter.frequency_Hz;
+                        ev.params["snr"] = snr_linear;
+                        logEvent(ev);
+                    }
                 }
             }
         }
@@ -153,24 +164,31 @@ void Simulator::step() {
         node->updateProcessing(config_.timestep);
     }
 
-    // 7. Transmission logging (unchanged)
+   // 7. Transmission logging – using the action from the *previous* step
     for (size_t i = 0; i < nodes_.size(); ++i) {
         const auto& node = nodes_[i];
-        if (node->getState().mode == NodeMode::TRANSMIT) {
+        int nid = static_cast<int>(node->id());
+        auto it = last_actions_.find(nid);
+        if (it == last_actions_.end()) continue;
+        const Action& last_action = it->second;
+        if (last_action.burst) {
             Event ev;
             ev.time = current_time_;
-            ev.node_id = static_cast<int>(node->id());
-            bool found_link = false;
+            ev.node_id = nid;
+            int target = last_action.burst->target_node_id;
+            bool found_active = false;
             for (const auto& link : links_) {
-                if (link->from() == node->id() && link->getState().active) {
+                if (link->from() == node->id() &&
+                    link->to() == NodeId{target} &&
+                    link->getState().active) {
                     ev.type = "TransmissionSuccess";
-                    ev.params["to"] = static_cast<double>(link->to());
+                    ev.params["to"] = static_cast<double>(target);
                     ev.params["capacity_mbps"] = link->getState().capacity_bps / 1e6;
-                    found_link = true;
+                    found_active = true;
                     break;
                 }
             }
-            if (!found_link) {
+            if (!found_active) {
                 ev.type = "TransmissionFail";
                 ev.params["reason"] = 0;
             }
@@ -180,6 +198,10 @@ void Simulator::step() {
 
     // 8. Advance time
     current_time_ += config_.timestep;
+
+    auto t_end = std::chrono::steady_clock::now();
+    current_metrics_.step_execution_time_us = std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_start).count();
+    metrics_history_.push_back(current_metrics_);
 }
 
 // ---- Reset ----
