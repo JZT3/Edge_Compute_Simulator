@@ -13,7 +13,8 @@ public:
                                 const std::vector<NodeState>& all_states,
                                 const std::vector<LinkState>& links,
                                 const EventLog& recent_events) = 0;
-    virtual std::string agentType() const = 0;
+    virtual std::string agentType() const { return "IAgent"; } // This provides a default implementation that the linker can resolve. 
+                                                               // The trampoline can still override it in Python.
 };
 
 } // namespace sigint_sim
