@@ -1,6 +1,4 @@
-// include/sim/core/virtual_radio.hpp
-#pragma once
-#include "radio_interface.hpp"
+#include "../include/sim/core/radio_interface.hpp"
 #include <deque>
 
 namespace sigint_sim {

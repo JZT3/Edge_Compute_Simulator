@@ -15,8 +15,8 @@ public:
 
     // Capture IQ samples from the air interface.
     virtual std::vector<std::complex<float>> receive(double center_freq,
-                                                      double sample_rate,
-                                                      double duration_s) = 0;
+                                                     double sample_rate,
+                                                     double duration_s) = 0;
 
     // Return the SoapySDR device string associated with this radio.
     [[nodiscard]] virtual std::string deviceString() const = 0;
