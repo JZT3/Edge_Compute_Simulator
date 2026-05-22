@@ -24,7 +24,10 @@ target_link_libraries(_sigint_sim_core PRIVATE sigint_sim_core)
 
 # Compile with C++23 and hide internal symbols
 target_compile_features(_sigint_sim_core PRIVATE cxx_std_23)
-set_target_properties(_sigint_sim_core PROPERTIES CXX_VISIBILITY_PRESET hidden)
+set_target_properties(_sigint_sim_core PROPERTIES 
+                       CXX_VISIBILITY_PRESET hidden
+                       LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/gui/src/sigint_gui"
+                       )
 
 # Release the GIL during step() calls (handled in source, but we set a note)
 # The bindings.cpp uses py::call_guard<py::gil_scoped_release> on step().
