@@ -11,13 +11,44 @@
 namespace py = pybind11;
 using namespace sigint_sim;
 
+// ---- Trampoline for IAgent -----------------------------------------------
+class PyIAgent : public IAgent {
+public:
+    // Inherit the constructor from IAgent
+    using IAgent::IAgent;
+
+    // Trampoline for pure virtual method
+    Action selectAction(const NodeState& my_state,
+                        const std::vector<NodeState>& all_states,
+                        const std::vector<LinkState>& links,
+                        const EventLog& recent_events) override {
+        PYBIND11_OVERRIDE_PURE(
+            Action,          // Return type
+            IAgent,          // Parent class
+            selectAction,    // Function name
+            my_state,        // Arguments
+            all_states,
+            links,
+            recent_events
+        );
+    }
+
+    std::string agentType() const override {
+        PYBIND11_OVERRIDE(
+            std::string,
+            IAgent,
+            agentType,
+        );
+    }
+};
+
 PYBIND11_MODULE(_sigint_sim_core, m) {
     m.doc() = "SIGINT simulation engine bindings";
 
     // ---- quick diagnostic ----
     m.def("ping", []() { return "pong"; });
 
-    // ---- factory function (inlined lambda to guarantee export) ----
+    // ---- factory for quick start (block‑fading, random agents) ----
     m.def(
         "create_default_simulator",
         [](uint64_t seed, double duration, py::list topology_list,
@@ -27,7 +58,6 @@ PYBIND11_MODULE(_sigint_sim_core, m) {
             cfg.timestep = 0.1;
             cfg.duration = duration;
 
-            // Convert Python list of (from,to) tuples
             for (auto item : topology_list) {
                 auto tup = item.cast<py::tuple>();
                 cfg.topology_edges.emplace_back(
@@ -36,7 +66,6 @@ PYBIND11_MODULE(_sigint_sim_core, m) {
                 );
             }
 
-            // Channel
             BlockFadingChannel::Params ch_params;
             ch_params.availability = availability;
             ch_params.avg_snr_db = avg_snr_db;
@@ -47,7 +76,6 @@ PYBIND11_MODULE(_sigint_sim_core, m) {
 
             auto sim = std::make_unique<Simulator>(cfg);
 
-            // Attach random agents with deterministic seeds derived from master seed
             int node_count = 0;
             for (const auto& edge : cfg.topology_edges) {
                 node_count = std::max(node_count,
@@ -56,9 +84,20 @@ PYBIND11_MODULE(_sigint_sim_core, m) {
             }
             node_count += 1;
             for (int i = 0; i < node_count; ++i) {
-                auto agent = std::make_unique<RandomAgent>(seed + i * 1000);
+                auto agent = std::make_shared<RandomAgent>(seed + i * 1000);
                 sim->setAgent(NodeId{i}, std::move(agent));
             }
+
+            std::vector<EmitterDesc> emitters;
+            EmitterDesc e;
+            e.id = 0;
+            e.frequency_Hz = 2.4e9;
+            e.bandwidth_Hz = 100e3;
+            e.priority = 5;
+            e.active_start_s = 0.0;
+            e.active_end_s = duration;
+            emitters.push_back(e);
+            sim->setEmitters(emitters);
 
             return sim;
         },
@@ -69,6 +108,46 @@ PYBIND11_MODULE(_sigint_sim_core, m) {
         py::arg("avg_snr_db") = 20.0,
         "Create a Simulator with two nodes and RandomAgents."
     );
+
+    // ---- scenario loader ----
+    m.def("load_scenario",
+          [](const std::string& json_path) -> std::unique_ptr<Simulator> {
+              Scenario sc = sigint_sim::loadScenario(json_path);
+              auto sim = std::make_unique<Simulator>(sc.config);
+              sim->setEmitters(sc.emitters);
+              return sim;
+          },
+          py::arg("json_path"),
+          "Load a scenario JSON file and return a configured Simulator.");
+    
+    // ---- Trampoline Class Actions ----
+    py::class_<Action::Burst>(m, "Burst")
+    .def(py::init<>())
+    .def_readwrite("target_node_id", &Action::Burst::target_node_id)
+    .def_readwrite("phy_mode", &Action::Burst::phy_mode)
+    .def_readwrite("power", &Action::Burst::power);
+
+    py::class_<Action>(m, "Action")
+        .def(py::init<>())
+        .def_readwrite("scan_params", &Action::scan_params)
+        .def_readwrite("process_task_ids", &Action::process_task_ids)
+        .def_readwrite("burst", &Action::burst)
+        .def_readwrite("stay_silent", &Action::stay_silent);
+
+    py::class_<RFParams>(m, "RFParams")
+        .def(py::init<>())
+        .def_readwrite("center_freq", &RFParams::center_freq)
+        .def_readwrite("bandwidth", &RFParams::bandwidth)
+        .def_readwrite("gain", &RFParams::gain)
+        .def_readwrite("sample_rate", &RFParams::sample_rate);
+    
+    // IAgent with trampoline
+    py::class_<IAgent, PyIAgent, std::shared_ptr<IAgent>>(m, "IAgent")
+        .def(py::init<>());
+
+    // RandomAgent – can be instantiated from Python
+    py::class_<RandomAgent, IAgent, std::shared_ptr<RandomAgent>>(m, "RandomAgent")
+        .def(py::init<uint64_t>(), py::arg("seed"));
 
     // ---- struct wrappers (read‑only views for Python) ----
     py::class_<NodeState>(m, "NodeState")
@@ -97,17 +176,26 @@ PYBIND11_MODULE(_sigint_sim_core, m) {
         .def("step", &Simulator::step,
              py::call_guard<py::gil_scoped_release>(),
              "Advance the simulation by one time step.")
+
         .def("reset", &Simulator::reset,
              py::arg("seed"),
              "Reset the simulation with a new seed.")
+
         .def("get_node_states", &Simulator::getNodeStates,
              "Return a list of NodeState snapshots.")
+
         .def("get_link_states", &Simulator::getLinkStates,
              "Return a list of LinkState snapshots.")
+
         .def("get_event_log", &Simulator::getEventLog,
              "Return the full event log (list of Event).")
+
         .def_property_readonly("current_time", &Simulator::currentTime)
         .def_property_readonly("is_finished", &Simulator::isFinished)
+
+        .def("set_agent", &Simulator::setAgent,
+            py::arg("node_id"), py::arg("agent"))
+
         .def("get_current_metrics", [](const Simulator& sim) {
             auto m = sim.getCurrentMetrics();
             py::dict d;
@@ -134,4 +222,4 @@ PYBIND11_MODULE(_sigint_sim_core, m) {
             }
             return out;
         });
-    }
+}
