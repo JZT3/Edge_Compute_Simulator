@@ -84,14 +84,23 @@ struct LinkState {
     bool active = false;
 };
 
-// Event log entry (variant later, for now simple struct)
+// Events
 struct Event {
     TimePoint time;
-    int node_id = -1;   // or NodeId
+    int node_id = -1;
     std::string type;
     std::unordered_map<std::string, double> params;
 };
-
 using EventLog = std::vector<Event>;
+
+struct EmitterDesc {
+    int id;
+    double frequency_Hz;
+    double bandwidth_Hz;
+    int priority;
+    std::string modulation;
+    double active_start_s;
+    double active_end_s;
+};
 
 } // namespace sigint_sim
