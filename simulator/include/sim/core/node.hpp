@@ -39,6 +39,8 @@ public:
     void injectSyntheticSignal(const std::vector<std::complex<float>>& iq,
                                double snr_linear);
 
+    void setLastSNR(double snr_linear) noexcept { last_snr_linear_ = snr_linear; }
+
     // Get a read‑only snapshot of the current state
     [[nodiscard]] NodeState getState() const noexcept;
 
