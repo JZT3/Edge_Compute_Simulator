@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+from ..controller import SimulatorController
 from ..utils.logging_setup import setup_logging
 setup_logging(log_file="sim_gui.log", level=logging.INFO)
 
@@ -64,19 +65,24 @@ class MainWindow(QMainWindow):
 
         # Simulator (created later via "New Scenario")
         self._sim: Optional[Simulator] = None
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._on_tick)
         self._step_interval_ms: int = 100
 
-        # Build UI pieces
+        # 1. Create UI pieces that don't depend on the controller
         self._create_actions()
         self._create_menu()
         self._create_toolbar()
         self._create_status_bar()
         self._create_central_widget()
-        self._create_dock_widgets()
+        self._create_dock_widgets()   
 
-        # Start with a default scenario for convenience
+        # 2. Set up the controller (before any scenario is loaded)
+        self._controller = SimulatorController()
+        self._controller.state_updated.connect(self._on_state_updated)
+        self._controller.finished.connect(self._on_sim_finished)
+        self._controller.error_occurred.connect(self._on_sim_error)
+        self._controller.metrics_updated.connect(self._on_metrics_updated)
+        self._metrics_history: list[tuple[float, float]] = []
+        
         self._new_scenario()
 
     # ------------------------------------------------------------------
@@ -134,6 +140,40 @@ class MainWindow(QMainWindow):
         self._status = QStatusBar()
         self.setStatusBar(self._status)
         self._status.showMessage("Ready")
+        
+    def _on_state_updated(self, nodes: list, links: list, sim_time: float) -> None:
+        """Refresh the network graph and any other views."""
+        self._graph_view.update_state(nodes, links, sim_time)
+        
+    def _on_metrics_updated(self, metrics: dict) -> None:
+        print("DEBUG: metrics received:", metrics)   
+
+        sim_time = self._sim.current_time if self._sim else 0.0
+        cumulative = metrics.get("cumulative_intelligence", 0.0)
+        self._metrics_history.append((sim_time, cumulative))
+        
+        print("DEBUG: history length:", len(self._metrics_history))
+
+
+        # Update chart every 5 points
+        if len(self._metrics_history) % 5 == 0:
+            times, values = zip(*self._metrics_history)
+            print("DEBUG: chart update with", len(times), "points")
+            self._chart.update_data(list(times), list(values))
+
+
+        # Update status bar
+        self._status.showMessage(
+            f"Time: {sim_time:.2f}s, Intel: {cumulative:.1f}, "
+            f"TX: {metrics.get('transmissions_attempted',0)}, "
+            f"LPD viol: {metrics.get('lpd_violations',0)}"
+        )
+
+    def _on_sim_finished(self) -> None:
+        self._status.showMessage("Simulation finished")
+
+    def _on_sim_error(self, msg: str) -> None:
+        QMessageBox.critical(self, "Simulation Error", msg)
 
     # ------------------------------------------------------------------
     # Central widget (network graph)
@@ -152,23 +192,41 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _create_dock_widgets(self) -> None:
-        # Parameter panel dock (placeholder)
+        from .parameter_panel import ParameterPanel
+        
+        self._param_panel = ParameterPanel()
+        self._param_panel.config_changed.connect(self._on_config_changed)
         param_dock = QDockWidget("Parameters", self)
-        param_dock.setWidget(QWidget())  # will be replaced in later phase
+        param_dock.setWidget(self._param_panel)
         self.addDockWidget(Qt.RightDockWidgetArea, param_dock)
 
-        # Time‑series chart dock (placeholder)
+        from .time_series_chart import TimeSeriesChart
+        
+        self._chart = TimeSeriesChart("Cumulative Intelligence")
         chart_dock = QDockWidget("Intelligence Over Time", self)
-        chart_dock.setWidget(QWidget())  # will be replaced in later phase
+        chart_dock.setWidget(self._chart)
         self.addDockWidget(Qt.BottomDockWidgetArea, chart_dock)
+
+        
+    def _on_config_changed(self, config: SimulatorConfig) -> None:
+        self._load_simulator(config)
 
     # ------------------------------------------------------------------
     # Scenario management
     # ------------------------------------------------------------------
 
     def _new_scenario(self) -> None:
-        """Create a default simulation and display it."""
-        config = SimulatorConfig()
+        import json
+        with open("scenarios/s1_two_node.json", "r") as f:
+            data = json.load(f)
+        from ..models import SimulatorConfig
+        config = SimulatorConfig(
+            seed=data["seed"],
+            duration=data["duration"],
+            topology=data["topology_edges"],
+            availability=0.9,
+            avg_snr_db=20.0
+        )
         self._load_simulator(config)
 
     def _load_config(self) -> None:
@@ -211,45 +269,46 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _load_simulator(self, config: SimulatorConfig) -> None:
-        """Replace the current simulator with a new one."""
-        if self._timer.isActive():
-            self._timer.stop()
-        if self._sim is not None:
-            self._sim.close()
+        """Stop previous simulation, load a new config, and start the background thread."""
+        if self._controller is not None:
+            self._controller.stop()
 
-        assert isinstance(config, SimulatorConfig)
-        self._sim = Simulator(config)
-        self._refresh_view()
+        self._controller.load_scenario(config)
+        self._sim = self._controller.sim         
+
+        self._metrics_history.clear()      
+        self._controller.start()
+
+        # The graph will be refreshed when the first state_ready signal arrives.
         self._status.showMessage(
-            f"Scenario loaded: {len(config.topology)} nodes, "
+            f"Scenario loaded: {len(config.topology_nodes())} nodes, "
             f"seed={config.seed}, duration={config.duration:.1f}s"
         )
 
     def _play(self) -> None:
-        assert self._sim is not None, "No simulator loaded"
-        self._timer.start(self._step_interval_ms)
+        if self._controller is None:
+            return
+        self._controller.play()
         self._status.showMessage("Running…")
 
     def _pause(self) -> None:
-        self._timer.stop()
+        if self._controller is None:
+            return
+        self._controller.pause()
         self._status.showMessage("Paused")
 
     def _step(self) -> None:
-        assert self._sim is not None, "No simulator loaded"
-        self._timer.stop()  # pause if running
-        events = self._sim.step(1)
-        self._refresh_view()
-        self._status.showMessage(
-            f"Time: {self._sim.current_time:.2f}s, "
-            f"Events: {len(events)}"
-        )
+        if self._controller is None:
+            return
+        # Step forces a single step; controller will emit state_updated afterwards
+        self._controller.step()
 
     def _reset(self) -> None:
-        if self._sim is None:
+        if self._controller is None or self._sim is None:
             return
-        self._timer.stop()
-        self._sim.reset(self._sim._config.seed)
-        self._refresh_view()
+        # Restart with the same seed to reset to t=0
+        self._controller.reset(self._sim._config.seed)
+        self._metrics_history.clear()
         self._status.showMessage("Reset to t=0")
 
     def _on_tick(self) -> None:
