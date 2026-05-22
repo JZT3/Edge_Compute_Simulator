@@ -81,16 +81,18 @@ void SDRNode::applyAction(const Action& action) {
 
 // ---- Processing update ----
 void SDRNode::updateProcessing(double dt) {
-    // If we have real IQ samples, use the signal processor
+    // If we have real IQ samples from a radio, use the signal processor
     if (mode_ == NodeMode::PROCESS && !rx_samples_.empty()) {
         SignalTask task;
-        task.type = SignalTaskType::DETECT;
+        task.type = SignalTaskType::DETECT;    // could later be determined by action
         task.center_freq_hz = current_rf_.center_freq > 0.0 ? current_rf_.center_freq : 2.4e9;
-        task.bandwidth_hz   = current_rf_.bandwidth > 0.0   ? current_rf_.bandwidth   : 1e6;
+        task.bandwidth_hz   = current_rf_.bandwidth   > 0.0 ? current_rf_.bandwidth   :   1e6;
         task.duration_s     = dt;
 
+        // Use the SNR that was stored from the latest RX (set by simulator after collectRxSamples)
         TaskResult res = signal_processor_.execute(task, last_snr_linear_,
                                                    profile_, rng_);
+
         buffer_size_ = static_cast<int>(res.data.size());
         energy_used_ += res.energy_joules;
         rx_samples_.clear();
@@ -98,7 +100,7 @@ void SDRNode::updateProcessing(double dt) {
         return;
     }
 
-    // Fallback for the old synthetic‑signal path
+    // Fallback for the old synthetic‑signal path (no radio)
     if (mode_ == NodeMode::PROCESS && has_unprocessed_signal_) {
         energy_used_ += compute_.fft_ops_per_sec * dt * 1e-6;
         has_unprocessed_signal_ = false;
