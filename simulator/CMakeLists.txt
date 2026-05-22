@@ -39,6 +39,16 @@ if(NOT googletest_FOUND)
     FetchContent_MakeAvailable(googletest)
 endif()
 
+if(NOT json_FOUND)
+FetchContent_Declare(
+    json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.12.0
+    )
+    FetchContent_MakeAvailable(json)
+endif()
+
+
 # =============================================================================
 # Core Library: sigint_sim_core
 # =============================================================================
@@ -47,12 +57,12 @@ set(CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/link.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/channel_model.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/simulator.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/event.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/agents/random_agent.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/logging/logger.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/virtual_radio.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/signal_processor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/sample_processing_channel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/radio_interface.cpp
 )
 
 add_library(sigint_sim_core STATIC ${CORE_SOURCES})
@@ -83,9 +93,10 @@ enable_testing()
 set(UNIT_TEST_SOURCES
     tests/unit/test_channel.cpp
     tests/unit/test_node.cpp
-    tests/unit/test_utility.cpp
     tests/unit/test_simulator.cpp
-)
+    tests/unit/test_signal_processor.cpp
+    tests/unit/test_virtual_radio.cpp
+    )
 add_executable(unit_tests ${UNIT_TEST_SOURCES})
 target_link_libraries(unit_tests PRIVATE sigint_sim_core GTest::gtest_main)
 add_test(NAME UnitTests COMMAND unit_tests)
@@ -98,8 +109,8 @@ target_link_libraries(integration_tests PRIVATE sigint_sim_core GTest::gtest_mai
 add_test(NAME IntegrationTests COMMAND integration_tests)
 
 # ---- Regression Tests ------------------------------------------------------
-add_executable(regression_tests
-    tests/regression/deterministic_replay.cpp
+add_executable(regression_tests 
+    tests/regression/phy_replay.cpp
 )
 target_link_libraries(regression_tests PRIVATE sigint_sim_core GTest::gtest_main)
 add_test(NAME RegressionTests COMMAND regression_tests)
