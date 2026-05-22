@@ -1,6 +1,9 @@
 
 """Entry point for `python -m sigint_gui`."""
 import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from PyQt5.QtWidgets import QApplication
 
 from sigint_gui.views.main_window import MainWindow, apply_dark_theme

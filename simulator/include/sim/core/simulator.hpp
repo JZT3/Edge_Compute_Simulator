@@ -33,7 +33,8 @@ public:
     void step();
     void reset(uint64_t new_seed);
 
-    void setAgent(NodeId id, std::unique_ptr<IAgent> agent);
+    void setAgent(NodeId id, std::shared_ptr<IAgent> agent); // works better with pybind11 
+                                                             // and the trampoline class
 
     [[nodiscard]] std::vector<NodeState> getNodeStates() const;
     [[nodiscard]] std::vector<LinkState> getLinkStates() const;
@@ -50,7 +51,7 @@ private:
     std::mt19937 rng_;
     TimePoint current_time_ = 0.0;
     EventLog event_log_;
-    std::unordered_map<int, std::unique_ptr<IAgent>> agents_;
+    std::unordered_map<int, std::shared_ptr<IAgent>> agents_;
     std::unordered_map<int, Action> last_actions_;   // Tracks the last action chosen by each node (key = int node id)
 
     void logEvent(Event e);

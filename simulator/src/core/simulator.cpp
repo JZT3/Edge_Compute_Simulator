@@ -84,7 +84,7 @@ Simulator::Simulator(Config config)
 }
 
 // ---- Agent injection ----
-void Simulator::setAgent(NodeId id, std::unique_ptr<IAgent> agent) {
+void Simulator::setAgent(NodeId id, std::shared_ptr<IAgent> agent) {
     agents_[static_cast<int>(id)] = std::move(agent);
 }
 
@@ -108,8 +108,20 @@ void Simulator::step() {
 
     // 2. Collect RX samples for all nodes (after channel processing)
     for (auto& node : nodes_) {
-        node->collectRxSamples();
+        node->updateProcessing(config_.timestep);
     }
+    for (size_t i = 0; i < nodes_.size(); ++i) {
+        double snr_sum = 0.0; int count = 0;
+        for (const auto& link : links_) {
+            if (link->to() == nodes_[i]->id() && link->getState().active) {
+                snr_sum += link->getState().snr;
+                count++;
+            }
+        }
+        double avg_snr_db = count > 0 ? snr_sum / count : -200.0;
+        double snr_linear = std::pow(10.0, avg_snr_db / 10.0);
+        nodes_[i]->setLastSNR(snr_linear);
+}
 
     // 3. Get fresh state snapshots
     auto node_states = collectNodeStates(nodes_);
@@ -146,6 +158,7 @@ void Simulator::step() {
                         node->injectSyntheticSignal(fake_signal, snr_linear);
                         // intelligence gain: add emitter priority
                         current_metrics_.cumulative_intelligence += emitter.priority;
+                        Logger::get()->info("Intel += {}", emitter.priority);
                         Event ev;
                         ev.time = current_time_;
                         ev.node_id = static_cast<int>(node->id());

@@ -1,4 +1,4 @@
-"""Interactive network graph using NetworkX, Pyvis, and QWebEngineView."""
+"""Interactive network graph."""
 
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ from ..utils.layout import compute_layout
 # ---------------------------------------------------------------------------
 # Visual constants
 # ---------------------------------------------------------------------------
-NODE_RADIUS: float = 22.0
-ARROW_SIZE: float = 11.0
+NODE_RADIUS: float = 100.0
+ARROW_SIZE: float = 50.0
 EDGE_WIDTH_ACTIVE: float = 2.5
 EDGE_WIDTH_INACTIVE: float = 1.0
 LABEL_FONT = QFont("Arial", 9, QFont.Bold)
