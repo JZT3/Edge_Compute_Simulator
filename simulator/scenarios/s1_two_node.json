@@ -1,7 +1,7 @@
 {
-    "seed": 12345,
+    "seed": 4206967,
     "timestep": 0.1,
-    "duration": 10.0,
+    "duration": 20.0,
     "topology_edges": [[0, 1], [1, 0]],
     "channel_type": "SampleProcessing",
     "channel_params": {
@@ -13,7 +13,7 @@
         "0": {
             "type": "RTL_SDR",
             "noise_figure_dB": 15.0,
-            "tx_power_dBm": 10.0,
+            "tx_power_dBm": -10.0,
             "frequency_accuracy_ppm": 10.0,
             "fft_gflops_per_sec": 0.5,
             "memory_mib": 256.0
@@ -29,7 +29,7 @@
     },
     "node_positions": {
         "0": [0.0, 0.0],
-        "1": [1.0, 0.0]
+        "1": [9.81, 0.0]
     },
     "emitters": [
         {
@@ -39,7 +39,16 @@
             "priority": 5,
             "modulation": "qpsk",
             "active_start_s": 0.0,
-            "active_end_s": 5.0
+            "active_end_s": 20.0
+        },
+        {
+            "id": 1,
+            "frequency_Hz": 100e6,
+            "bandwidth_Hz": 25e3,
+            "priority": 3,
+            "modulation": "fm",
+            "active_start_s": 0.0,
+            "active_end_s": 20.0
         }
     ]
 }
