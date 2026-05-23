@@ -24,12 +24,17 @@ from PyQt5.QtWidgets import (
     QToolBar,
     QWidget,
     QVBoxLayout,
+    QSizePolicy,
+    QInputDialog,
 )
 
 from ..models import SimulatorConfig
 from ..simulator_wrapper import Simulator
 from ..utils.logging_setup import setup_logging
+from ..utils.output import DEFAULT_OUTPUT_DIR
 from .network_graph import NetworkGraphView
+from .parameter_panel import ParameterPanel
+from .time_series_chart import TimeSeriesChart
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +66,9 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("SIGINT Simulator – Game‑Theoretic Orchestrator")
-        self.resize(1200, 800)
+        self.setMinimumHeight(600)
+        self.setMinimumWidth(800)
+        self.resize(1200, 900)    
 
         # Simulator (created later via "New Scenario")
         self._sim: Optional[Simulator] = None
@@ -83,7 +90,24 @@ class MainWindow(QMainWindow):
         self._controller.metrics_updated.connect(self._on_metrics_updated)
         self._metrics_history: list[tuple[float, float]] = []
         
-        self._new_scenario()
+        choice, ok = QInputDialog.getItem(
+            self, "Select Scenario Source",
+            "Choose initial scenario:",
+            ["Default (built-in)", "Load from JSON file..."], 0, False)
+        
+        if not ok:
+            sys.exit(0)   # user cancelled
+
+        if choice == "Default (built-in)":
+            self._new_scenario()          # uses factory (create_default_simulator)
+        else:
+            # Let user pick a JSON file from the scenarios/ folder
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Open Scenario JSON", "scenarios", "JSON Files (*.json)")
+            if path:
+                self._load_json_scenario(path)
+            else:
+                self._new_scenario()
 
     # ------------------------------------------------------------------
     # Actions, menus, toolbar
@@ -128,6 +152,13 @@ class MainWindow(QMainWindow):
         sim_menu.addAction(self._act_pause)
         sim_menu.addAction(self._act_step)
         sim_menu.addAction(self._act_reset)
+        
+        #view menu
+        view_menu = self.menuBar().addMenu("&View")
+        if hasattr(self, '_param_dock'):
+            view_menu.addAction(self._param_dock.toggleViewAction())
+        if hasattr(self, '_chart_dock'):
+            view_menu.addAction(self._chart_dock.toggleViewAction())
 
     def _create_toolbar(self) -> None:
         toolbar: QToolBar = self.addToolBar("Simulation")
@@ -146,31 +177,66 @@ class MainWindow(QMainWindow):
         self._graph_view.update_state(nodes, links, sim_time)
         
     def _on_metrics_updated(self, metrics: dict) -> None:
-        print("DEBUG: metrics received:", metrics)   
+        # print("DEBUG: metrics received:", metrics)   
 
         sim_time = self._sim.current_time if self._sim else 0.0
-        cumulative = metrics.get("cumulative_intelligence", 0.0)
-        self._metrics_history.append((sim_time, cumulative))
-        
-        print("DEBUG: history length:", len(self._metrics_history))
+        mission = metrics.get("cumulative_intelligence", 0.0)
+        attempted = metrics.get("transmissions_attempted", 0)
+        succeeded = metrics.get("transmissions_succeeded", 0)
+        rate = (succeeded / attempted * 100.0) if attempted > 0 else 0.0
 
+        self._metrics_history.append((sim_time, mission, rate))
+        
+        # print("DEBUG: history length:", len(self._metrics_history))
 
         # Update chart every 5 points
         if len(self._metrics_history) % 5 == 0:
-            times, values = zip(*self._metrics_history)
-            print("DEBUG: chart update with", len(times), "points")
-            self._chart.update_data(list(times), list(values))
-
+            times, missions, rates = zip(*self._metrics_history)
+            # print("DEBUG: chart update with", len(times), "points")
+            self._chart.update_data(list(times), list(missions), list(rates))
 
         # Update status bar
         self._status.showMessage(
-            f"Time: {sim_time:.2f}s, Intel: {cumulative:.1f}, "
-            f"TX: {metrics.get('transmissions_attempted',0)}, "
-            f"LPD viol: {metrics.get('lpd_violations',0)}"
+            f"Time: {sim_time:.2f}s, Mission: {mission:.1f}, "
+            f"TX Success: {rate:.0f}%, LPD viol: {metrics.get('lpd_violations',0)}"
         )
 
     def _on_sim_finished(self) -> None:
         self._status.showMessage("Simulation finished")
+        
+        if not self._metrics_history:
+            return
+        
+        times, missions, rates = zip(*self._metrics_history)
+        total_intel = missions[-1] if missions else 0.0
+        avg_success = sum(rates) / len(rates) if rates else 0.0
+        
+        msg = (f"Simulation finished.\n"
+            f"Total Mission Value: {total_intel:.1f}\n"
+            f"Average TX Success Rate: {avg_success:.0f}%\n"
+            f"LPD Violations: {self._sim.get_metrics().get('lpd_violations',0)}")
+        
+        reply = QMessageBox.information(self, "Run Summary", msg,
+                                        QMessageBox.Ok | QMessageBox.Save)
+        
+        if reply == QMessageBox.Save:
+            # Save metrics to CSV
+            import csv
+            path, _ = QFileDialog.getSaveFileName(
+                        self, 
+                        "Save Run Data", 
+                        str(DEFAULT_OUTPUT_DIR / "run_data.csv"),
+                        "CSV Files (*.csv)"
+                    )
+
+            if path:
+                with open(path, 'w', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["Time_s", "Mission_Value", "TX_Success_Rate"])
+                    for t, m, r in self._metrics_history:
+                        writer.writerow([t, m, r])
+                self._status.showMessage(f"Data saved to {path}")
+            pass
 
     def _on_sim_error(self, msg: str) -> None:
         QMessageBox.critical(self, "Simulation Error", msg)
@@ -180,32 +246,29 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _create_central_widget(self) -> None:
+        """Only the network graph lives in the central area."""
         self._graph_view = NetworkGraphView()
-        central = QWidget()
-        layout = QVBoxLayout(central)
-        layout.addWidget(self._graph_view)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.setCentralWidget(central)
+        self._graph_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setCentralWidget(self._graph_view)
 
     # ------------------------------------------------------------------
     # Dock widgets (parameter panel, charts – stubs for now)
     # ------------------------------------------------------------------
 
     def _create_dock_widgets(self) -> None:
-        from .parameter_panel import ParameterPanel
-        
+        # Parameter panel (right side)
         self._param_panel = ParameterPanel()
-        self._param_panel.config_changed.connect(self._on_config_changed)
-        param_dock = QDockWidget("Parameters", self)
-        param_dock.setWidget(self._param_panel)
-        self.addDockWidget(Qt.RightDockWidgetArea, param_dock)
+        self._param_dock = QDockWidget("Scenario Parameters", self)
+        self._param_dock.setWidget(self._param_panel)
+        self._param_dock.setMinimumWidth(300)
+        self.addDockWidget(Qt.RightDockWidgetArea, self._param_dock)
 
-        from .time_series_chart import TimeSeriesChart
-        
-        self._chart = TimeSeriesChart("Cumulative Intelligence")
-        chart_dock = QDockWidget("Intelligence Over Time", self)
-        chart_dock.setWidget(self._chart)
-        self.addDockWidget(Qt.BottomDockWidgetArea, chart_dock)
+        # Time-series chart (bottom)
+        self._chart = TimeSeriesChart("Mission Intelligence")
+        self._chart_dock = QDockWidget("Intelligence Over Time", self)
+        self._chart_dock.setWidget(self._chart)
+        self._chart_dock.setMinimumHeight(200)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self._chart_dock)
 
         
     def _on_config_changed(self, config: SimulatorConfig) -> None:
@@ -216,18 +279,16 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _new_scenario(self) -> None:
-        import json
-        with open("scenarios/s1_two_node.json", "r") as f:
-            data = json.load(f)
-        from ..models import SimulatorConfig
-        config = SimulatorConfig(
-            seed=data["seed"],
-            duration=data["duration"],
-            topology=data["topology_edges"],
-            availability=0.9,
-            avg_snr_db=20.0
-        )
-        self._load_simulator(config)
+        # Adjust the path to your actual file
+        scenario_path = "scenarios/s1_two_node.json"
+        self._controller.load_json(scenario_path)
+        self._sim = self._controller.sim
+        self._metrics_history.clear()
+        # Fetch initial state and display
+        nodes = self._sim.get_node_states()
+        links = self._sim.get_link_states()
+        self._graph_view.update_state(nodes, links, self._sim.current_time)
+        self._controller.start()
 
     def _load_config(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -274,7 +335,12 @@ class MainWindow(QMainWindow):
             self._controller.stop()
 
         self._controller.load_scenario(config)
-        self._sim = self._controller.sim         
+        self._sim = self._controller.sim
+        
+        if self._sim is not None:
+            nodes = self._sim.get_node_states()
+            links = self._sim.get_link_states()
+            self._graph_view.update_state(nodes, links, self._sim.current_time)         
 
         self._metrics_history.clear()      
         self._controller.start()
@@ -284,6 +350,16 @@ class MainWindow(QMainWindow):
             f"Scenario loaded: {len(config.topology_nodes())} nodes, "
             f"seed={config.seed}, duration={config.duration:.1f}s"
         )
+        
+    def _load_json_scenario(self, json_path: str) -> None:
+        """Load a scenario from a JSON file and start it."""
+        self._controller.load_json(json_path)
+        self._sim = self._controller.sim
+        self._metrics_history.clear()
+        nodes = self._sim.get_node_states()
+        links = self._sim.get_link_states()
+        self._graph_view.update_state(nodes, links, self._sim.current_time)
+        self._controller.start()
 
     def _play(self) -> None:
         if self._controller is None:
@@ -304,12 +380,36 @@ class MainWindow(QMainWindow):
         self._controller.step()
 
     def _reset(self) -> None:
-        if self._controller is None or self._sim is None:
+        if self._sim is None or self._controller is None:
             return
-        # Restart with the same seed to reset to t=0
-        self._controller.reset(self._sim._config.seed)
+        
+        # 1. Stop running simulation
+        self._controller.stop()
+        
+        # 2. Reset the native simulator (time, rng)
+        seed = self._sim._config.seed if self._sim._config else 42
+        self._sim.reset(seed)
+        
+        # 3. Clear metrics and chart
         self._metrics_history.clear()
+        self._chart.update_data([], [], [])
+        
+        # 4. Fetch initial state and update graph
+        nodes = self._sim.get_node_states()
+        links = self._sim.get_link_states()
+        self._graph_view.update_state(nodes, links, self._sim.current_time)
+        
+        # 5. Restart the controller
+        self._controller.start()
         self._status.showMessage("Reset to t=0")
+        
+    def closeEvent(self, event):
+        # Stop the simulation controller and wait for the thread
+        if hasattr(self, '_controller') and self._controller is not None:
+            self._controller.stop()
+            # Give the thread a moment to finish
+            QThread.msleep(100)
+        event.accept()
 
     def _on_tick(self) -> None:
         """Called by the timer at each interval."""
