@@ -146,6 +146,7 @@ class NodeItem(QGraphicsEllipseItem):
         self.setAcceptHoverEvents(True)
         self.setZValue(1)               # draw above edges
 
+
         # Centred text label
         label = QGraphicsTextItem(str(node_id), self)
         label.setDefaultTextColor(Qt.white)
@@ -310,9 +311,11 @@ class NetworkGraphView(QWidget):
             color = NODE_COLORS.get(ns.mode, QColor("gray"))
             tooltip = (
                 f"Node {ns.id}: {ns.name}\n"
+                f"Type: {ns.device_type}\n"
                 f"Mode: {ns.mode.name}\n"
-                f"Buffer: {ns.buffer_size}\n"
-                f"Energy: {ns.energy_used:.3e}"
+                f"Noise Fig: {ns.noise_figure_dB} dB, TX Pwr: {ns.tx_power_dBm} dBm\n"
+                f"Freq Acc: {ns.frequency_accuracy_ppm} ppm, FFT: {ns.fft_gflops_per_sec} GFLOPS\n"
+                f"Buffer: {ns.buffer_size} B, Energy: {ns.energy_used:.3e} J"
             )
             self._scene.addItem(NodeItem(ns.id, pos[ns.id], color, tooltip))
 
