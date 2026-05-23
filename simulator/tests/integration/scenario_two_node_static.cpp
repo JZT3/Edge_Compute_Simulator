@@ -71,7 +71,7 @@ protected:
 
         // By default, attach RandomAgents (used by most tests)
         for (int i = 0; i < 2; ++i) {
-            auto agent = std::make_unique<RandomAgent>(cfg_.seed + i * 1000);
+            auto agent = std::make_shared<RandomAgent>(cfg_.seed + i * 1000);
             simulator_->setAgent(NodeId{i}, std::move(agent));
         }
     }
@@ -99,7 +99,7 @@ TEST_F(TwoNodeIntegrationTest, Determinism_IdenticalLogs) {
 
     Simulator sim2(cfg_);
     for (int i = 0; i < 2; ++i) {
-        auto agent = std::make_unique<RandomAgent>(cfg_.seed + i * 1000);
+        auto agent = std::make_shared<RandomAgent>(cfg_.seed + i * 1000);
         sim2.setAgent(NodeId{i}, std::move(agent));
     }
     for (int i = 0; i < 10; ++i) sim2.step();
@@ -198,8 +198,8 @@ TEST_F(TwoNodeIntegrationTest, Determinism_SameSeedSameEventLog) {
     Simulator simA(cfg_);
     Simulator simB(cfg_);
     for (int i = 0; i < 2; ++i) {
-        simA.setAgent(NodeId{i}, std::make_unique<RandomAgent>(cfg_.seed + i * 100));
-        simB.setAgent(NodeId{i}, std::make_unique<RandomAgent>(cfg_.seed + i * 100));
+        simA.setAgent(NodeId{i}, std::make_shared<RandomAgent>(cfg_.seed + i * 100));
+        simB.setAgent(NodeId{i}, std::make_shared<RandomAgent>(cfg_.seed + i * 100));
     }
     for (int step = 0; step < 5; ++step) {
         simA.step();

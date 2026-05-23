@@ -155,11 +155,11 @@ TEST_F(SimulatorTest, Determinism_SameConfigAndAgents_IdenticalEventLog) {
 
     // Attach identical RandomAgents to both sims
     for (int i = 0; i < 2; ++i) {
-        auto ag = std::make_unique<RandomAgent>(12345 + i * 100);
+        auto ag = std::make_shared<RandomAgent>(12345 + i * 100);
         simA.setAgent(NodeId{i}, std::move(ag));
     }
     for (int i = 0; i < 2; ++i) {
-        auto ag = std::make_unique<RandomAgent>(12345 + i * 100);
+        auto ag = std::make_shared<RandomAgent>(12345 + i * 100);
         simB.setAgent(NodeId{i}, std::move(ag));
     }
 

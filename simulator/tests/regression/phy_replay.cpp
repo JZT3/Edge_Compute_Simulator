@@ -34,8 +34,8 @@ TEST(PhyRegression, ReplayProducesIdenticalLog) {
     auto run_sim = [&]() {
         Simulator sim(cfg);
         // Use deterministic seeds for the agents
-        sim.setAgent(NodeId{0}, std::make_unique<RandomAgent>(cfg.seed));
-        sim.setAgent(NodeId{1}, std::make_unique<RandomAgent>(cfg.seed + 1000));
+        sim.setAgent(NodeId{0}, std::make_shared<RandomAgent>(cfg.seed));
+        sim.setAgent(NodeId{1}, std::make_shared<RandomAgent>(cfg.seed + 1000));
         for (int i = 0; i < 10; ++i) sim.step();
         return sim.getEventLog();
     };
