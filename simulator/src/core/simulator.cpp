@@ -153,8 +153,8 @@ void Simulator::step() {
                     if (std::abs(node_freq - emitter.frequency_Hz) / emitter.frequency_Hz < 0.01) {
                         node->setSignalDetected(true);
                         // inject synthetic IQ
-                        std::vector<std::complex<float>> fake_signal(100, {1.0f, 0.0f});
-                        double snr_linear = 15.0; // could compute from channel, but simplified
+                        std::vector<std::complex<float>> fake_signal(SYNTHETIC_SIGNAL_SAMPLES, {1.0f, 0.0f});
+                        double snr_linear = SYNTHETIC_SIGNAL_SNR_DB; // could compute from channel, but simplified
                         node->injectSyntheticSignal(fake_signal, snr_linear);
                         // intelligence gain: add emitter priority
                         current_metrics_.cumulative_intelligence += emitter.priority;
@@ -184,29 +184,49 @@ void Simulator::step() {
         auto it = last_actions_.find(nid);
         if (it == last_actions_.end()) continue;
         const Action& last_action = it->second;
-        if (last_action.burst) {
-            Event ev;
-            ev.time = current_time_;
-            ev.node_id = nid;
-            int target = last_action.burst->target_node_id;
-            bool found_active = false;
-            for (const auto& link : links_) {
-                if (link->from() == node->id() &&
-                    link->to() == NodeId{target} &&
-                    link->getState().active) {
-                    ev.type = "TransmissionSuccess";
-                    ev.params["to"] = static_cast<double>(target);
-                    ev.params["capacity_mbps"] = link->getState().capacity_bps / 1e6;
-                    found_active = true;
-                    break;
-                }
+        if (!last_action.burst) continue;
+
+        Event ev;
+        ev.time = current_time_;
+        ev.node_id = nid;
+        int target = last_action.burst->target_node_id;
+        bool found_active = false;
+
+        for (const auto& link : links_) {
+            if (link->from() == node->id() &&
+                link->to() == NodeId{target} &&
+                link->getState().active) {
+                found_active = true;
+                ev.type = "TransmissionSuccess";
+                ev.params["to"] = static_cast<double>(target);
+                ev.params["capacity_mbps"] = link->getState().capacity_bps / 1e6;
+
+                // Reliable debug: prints only when success is found
+                Logger::get()->info("TX success: node {} -> {} | SNR {:.1f} dB | Cap {:.1f} Mbps",
+                                    nid, target, link->getState().snr,
+                                    link->getState().capacity_bps / 1e6);
+                break;
             }
-            if (!found_active) {
-                ev.type = "TransmissionFail";
-                ev.params["reason"] = 0;
-            }
-            logEvent(ev);
         }
+
+        if (!found_active) {
+            ev.type = "TransmissionFail";
+            ev.params["reason"] = 0;
+            Logger::get()->info("TX fail: node {} -> {} (no active link)", nid, target);
+        }
+
+        // ---------- Metrics (once per attempt) ----------
+        current_metrics_.transmissions_attempted++;
+        if (found_active) {
+            current_metrics_.transmissions_succeeded++;
+        } else {
+            current_metrics_.lpd_violations++;               // only count failures? or all? keep all for now
+        }
+        // LPD penalty – pay it on EVERY transmission (attempt)
+        current_metrics_.cumulative_intelligence -= LPD_PENALTY_PER_TX;
+        current_metrics_.lpd_violations++;   // every TX is a violation in this simple model
+
+        logEvent(ev);
     }
 
     // 8. Advance time
@@ -238,8 +258,8 @@ const EventLog& Simulator::getEventLog() const {
 // ---- Event logging ----
 void Simulator::logEvent(Event e) {
     e.time = current_time_;
-    event_log_.push_back(std::move(e));
     Logger::get()->info("[t={:.2f}] {} (node {})", e.time, e.type, e.node_id);
+    event_log_.push_back(std::move(e));
 }
 
 // ---- Channel parameter preparation ----
