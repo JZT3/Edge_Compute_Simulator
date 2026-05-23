@@ -1,5 +1,7 @@
 #include "../include/sim/core/sample_processing_channel.hpp"
 #include "../include/sim/core/phy_math.hpp"
+#include "../include/sim/core/sim_config.hpp"
+#include "../include/sim/logging/logger.hpp"
 #include <cmath>
 #include <random>
 #include <cassert>
@@ -58,8 +60,7 @@ void SampleProcessingChannel::update(std::vector<LinkState>& links,
         auto key = std::make_pair(static_cast<int>(ls.from), static_cast<int>(ls.to));
         auto it = link_buffers_.find(key);
         if (it != link_buffers_.end()) {
-                void processLink(LinkBuffer& buf, LinkState& state, std::mt19937& rng,
-                     int dst_node_id);
+                processLink(it->second, ls, rng, key.first, static_cast<int>(ls.to));
         } else {
             // No buffer → link down
             ls.active = false;
@@ -72,7 +73,7 @@ void SampleProcessingChannel::update(std::vector<LinkState>& links,
 
 // ---- Core per‑link processing ----
 void SampleProcessingChannel::processLink(LinkBuffer& buf, LinkState& state,
-                                          std::mt19937& rng, int dst_node_id) {
+                                          std::mt19937& rng, int src_node_id, int dst_node_id) {
     if (buf.tx_samples.empty()) {
         state.active = false;
         state.snr = -200.0;
@@ -83,7 +84,7 @@ void SampleProcessingChannel::processLink(LinkBuffer& buf, LinkState& state,
     }
 
     // Retrieve noise figure for the destination node
-    double noise_figure_dB = 10.0;   // default
+    double noise_figure_dB = DEFAULT_NOISE_FIGURE_DB; 
     auto prof_it = node_profiles_.find(dst_node_id);
     if (prof_it != node_profiles_.end()) {
         noise_figure_dB = prof_it->second.noise_figure_dB;
@@ -92,6 +93,8 @@ void SampleProcessingChannel::processLink(LinkBuffer& buf, LinkState& state,
     // 1. Path loss (linear gain)
     const double path_loss = phy_math::friis_path_loss_linear(buf.center_freq, buf.distance_m);
 
+    Logger::get()->info("Link from {} to {}: dist={:.1f}m, path_loss_linear={:.6f}", 
+                        src_node_id, dst_node_id, buf.distance_m, path_loss);
     // 2. Noise power (W)
     const double noise_W = phy_math::thermal_noise_power_W(params_.bandwidth_Hz, noise_figure_dB);
 
