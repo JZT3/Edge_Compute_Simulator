@@ -3,6 +3,7 @@
 #include "node.hpp"
 #include "link.hpp"
 #include "channel_model.hpp"
+#include "sim_config.hpp"
 #include "../include/sim/agents/agent_interface.hpp"
 #include "metrics.hpp"
 #include <memory>
@@ -19,8 +20,8 @@ class Simulator {
 public:
     struct Config {
         uint64_t seed;
-        double timestep = 0.1;
-        double duration = 10.0;
+        double timestep = SIM_DEFAULT_TIMESTEP_S;
+        double duration = SIM_DEFAULT_DURATION_S;
         std::vector<std::pair<NodeId, NodeId>> topology_edges;
         std::shared_ptr<ChannelModel> channel;
 

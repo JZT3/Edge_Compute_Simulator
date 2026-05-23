@@ -1,5 +1,6 @@
 #pragma once
 #include "types.hpp"
+#include "sim_config.hpp"
 
 namespace sigint_sim {
 

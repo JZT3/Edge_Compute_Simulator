@@ -1,6 +1,7 @@
 #pragma once
 #include "channel_model.hpp"
 #include "hardware_profile.hpp"
+#include "sim_config.hpp"
 #include <unordered_map>
 #include <deque>
 
@@ -16,10 +17,10 @@ struct PairHash {
 class SampleProcessingChannel : public ChannelModel {
 public:
     struct Params {
-        double frequency_MHz = 2400.0;
-        double bandwidth_Hz = 10e6;
-        double snr_threshold_dB = 5.0;     // for active flag
-        double ber_threshold = 1e-3;       // for active flag
+        double frequency_MHz    = DA_FREQUENCY_MHZ;
+        double bandwidth_Hz     = DA_BANDWIDTH_HZ;
+        double snr_threshold_dB = DA_SNR_THRESHOLD_DB;     // for active flag
+        double ber_threshold    = DEFAULT_BER_THRESHOLD;        // for active flag
     };
 
     explicit SampleProcessingChannel(Params p);
@@ -49,14 +50,14 @@ private:
     // Per‑link state: TX buffer, RX buffer, last computed metrics
     struct LinkBuffer {
         std::vector<std::complex<float>> tx_samples;
-        double tx_sample_rate = 1e6;
+        double tx_sample_rate = LINK_DEFAULT_TX_SAMPLE_RATE;
         std::vector<std::complex<float>> rx_samples;
         // physical parameters set by setLinkParams before update
-        double distance_m = 0.0;
-        double center_freq = 0.0;
-        double tx_rate = 1e6;
-        double rx_rate = 1e6;
-        double freq_offset_hz = 0.0;
+        double distance_m     = LINK_DEFAULT_DISTANCE_M;
+        double center_freq    = LINK_DEFAULT_CENTER_FREQ_HZ;
+        double tx_rate        = LINK_DEFAULT_TX_RATE;
+        double rx_rate        = LINK_DEFAULT_RX_RATE;
+        double freq_offset_hz = LINK_DEFAULT_FREQ_OFFSET_HZ;
     };
 
     // Mapping (src,dst) -> LinkBuffer; we'll use a pair hash
@@ -66,6 +67,6 @@ private:
     std::unordered_map<int, HardwareProfile> node_profiles_;
 
     // Helper to compute path loss, noise, and process samples
-    void processLink(LinkBuffer& buf, LinkState& state, std::mt19937& rng, int dst_node_id);
+    void processLink(LinkBuffer& buf, LinkState& state, std::mt19937& rng, int src_node_id, int dst_node_id);
 };
 } // namespace sigint_sim

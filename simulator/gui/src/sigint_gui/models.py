@@ -17,12 +17,19 @@ class NodeMode(IntEnum):
 
 @dataclass(frozen=True)
 class NodeState:
-    """Snapshot of a single SDR node’s state."""
     id: int
     name: str
     mode: NodeMode
     buffer_size: int
     energy_used: float
+    device_type: str = ""
+    noise_figure_dB: float = 0.0
+    tx_power_dBm: float = 0.0
+    frequency_accuracy_ppm: float = 0.0
+    fft_gflops_per_sec: float = 0.0
+    x: float = 0.0
+    y: float = 0.0
+    current_rf: Optional[RFParams] = None   # we’ll add RFParams later if needed
 
 
 @dataclass(frozen=True)

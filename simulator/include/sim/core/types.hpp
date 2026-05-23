@@ -68,8 +68,17 @@ struct NodeState {
     double energy_used = 0.0;
     std::unordered_map<int, double> neighbor_availability_belief; // node_id -> probability
     double tx_power_dbm = 20.0;   // per‑node quality (higher → longer range)
-    double x = 0.0;  // meters
-    double y = 0.0;  // meters
+    double x = 0.0;
+    double y = 0.0; 
+
+    // --- new fields for GUI tooltip ---
+    std::string device_type;      // e.g., "RTL_SDR", "USRP_B2XX"
+    double noise_figure_dB = 0.0;
+    double tx_power_dBm = 0.0;
+    double frequency_accuracy_ppm = 0.0;
+    double fft_gflops_per_sec = 0.0;
+    // ---------------------------------
+
 };
 
 // Link state snapshot

@@ -162,11 +162,19 @@ class SimulatorController(QObject):
         if self._sim is not None:
             self._sim.close()
         self._sim = Simulator(config)
+        
+    def load_json(self, json_path: str) -> None:
+        """Load a JSON scenario and prepare the simulation (does not start)."""
+        self.stop()
+        self._sim = Simulator.from_json(json_path)
 
     def start(self) -> None:
         """Start the background thread and begin the simulation loop."""
         assert self._sim is not None, "No simulator loaded"
         assert self._thread is None, "Thread already started"
+
+        if self._thread and self._thread.isRunning():
+            self.stop()  
 
         self._thread = QThread()
         self._worker = _SimulationWorker(self._sim)
@@ -187,12 +195,14 @@ class SimulatorController(QObject):
         self._thread.start()
 
     def stop(self) -> None:
-        """Stop the simulation and clean up the thread."""
-        if self._worker is not None:
+        """Stop the simulation thread and wait for it to finish."""
+        if self._worker:
             self._worker.request_pause()
-        if self._thread is not None:
+        if self._thread:
             self._thread.quit()
-            self._thread.wait(2000)  # bounded wait
+            if not self._thread.wait(3000):   # 3 second timeout
+                self._thread.terminate()       # force kill if stuck
+                self._thread.wait(1000)
             self._thread = None
             self._worker = None
 

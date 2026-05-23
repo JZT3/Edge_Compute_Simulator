@@ -18,6 +18,8 @@ CLEAN_FLAG="${2:-}"
 if [[ "$BUILD_TYPE" == "-c" ]]; then
     BUILD_TYPE="release"
     CLEAN_FLAG="-c"
+    rm -rf output/
+    echo "Output directory cleaned"
 fi
 
 BUILD_DIR="build"

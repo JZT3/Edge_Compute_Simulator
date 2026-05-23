@@ -1,5 +1,6 @@
 #pragma once
 #include "hardware_profile.hpp"
+#include "sim_config.hpp"
 #include <cstdint>
 #include <vector>
 #include <random>
@@ -11,7 +12,7 @@ enum class SignalTaskType { SCAN, DETECT, RAW_IQ, TDOA, FEATURE };
 struct SignalTask {
     SignalTaskType type;
     double center_freq_hz = 2.4e9;
-    double bandwidth_hz = 1e6;
+    double bandwidth_hz = DEFAULT_BANDWIDTH_HZ;
     double duration_s = 0.001;      // observation time
 };
 

@@ -1,5 +1,6 @@
 #include "../include/sim/core/node.hpp"
 #include "../include/sim/logging/logger.hpp"
+#include "../include/sim/core/sim_config.hpp"
 #include <cassert>
 #include <cmath>
 
@@ -57,11 +58,11 @@ void SDRNode::applyAction(const Action& action) {
 
         if (radio_) {
             // Use valid frequencies; default to 2.4 GHz / 1 MHz if nothing set
-            double freq = (current_rf_.center_freq > 0.0) ? current_rf_.center_freq : 2.4e9;
-            double rate = (current_rf_.sample_rate > 0.0)   ? current_rf_.sample_rate   : 1e6;
+            double freq = (current_rf_.center_freq > 0.0)   ? current_rf_.center_freq : NODE_FALLBACK_CENTER_FREQ_HZ;
+            double rate = (current_rf_.sample_rate > 0.0)   ? current_rf_.sample_rate : NODE_FALLBACK_SAMPLE_RATE_HZ;
 
             // Create a simple pilot burst
-            std::vector<std::complex<float>> samples(100, {1.0f, 0.0f});
+            std::vector<std::complex<float>> samples(NODE_TX_PILOT_SAMPLES, {1.0f, 0.0f});
 
             // Diagnostic (remove after debugging)
             Logger::get()->debug(
@@ -74,7 +75,7 @@ void SDRNode::applyAction(const Action& action) {
             } catch (const std::exception& e) {
                 Logger::get()->error("Node {} transmit failed: {}", static_cast<int>(id_), e.what());
             }
-            energy_used_ += 0.001 * 1e-3;   // placeholder TX energy
+            energy_used_ += NODE_TX_ENERGY_INCREMENT_J;   // placeholder TX energy
         }
     }
 }
@@ -102,7 +103,7 @@ void SDRNode::updateProcessing(double dt) {
 
     // Fallback for the old synthetic‑signal path (no radio)
     if (mode_ == NodeMode::PROCESS && has_unprocessed_signal_) {
-        energy_used_ += compute_.fft_ops_per_sec * dt * 1e-6;
+        energy_used_ += compute_.fft_ops_per_sec * dt * NODE_PROCESSING_ENERGY_FACTOR;
         has_unprocessed_signal_ = false;
         buffer_size_ = 0;
     }
@@ -111,8 +112,8 @@ void SDRNode::updateProcessing(double dt) {
 // ---- Radio samples collection ----
 void SDRNode::collectRxSamples() {
     if (radio_) {
-        double freq = current_rf_.center_freq > 0.0 ? current_rf_.center_freq : 2.4e9;
-        double rate = current_rf_.sample_rate > 0.0 ? current_rf_.sample_rate : 1e6;
+        double freq = current_rf_.center_freq > 0.0 ? current_rf_.center_freq : NODE_FALLBACK_CENTER_FREQ_HZ;
+        double rate = current_rf_.sample_rate > 0.0 ? current_rf_.sample_rate : NODE_FALLBACK_SAMPLE_RATE_HZ;
         rx_samples_ = radio_->receive(freq, rate, 0.0);
         // The radio is expected to store the SNR of the last successful receive.
         // We retrieve it via a dedicated method (to be added to IRadio or VirtualRadio).
@@ -140,6 +141,12 @@ NodeState SDRNode::getState() const noexcept {
     s.energy_used = energy_used_;
     s.x = x_;
     s.y = y_;
+
+    s.device_type = profile_.deviceTypeToString();   // add a helper to convert enum to string
+    s.noise_figure_dB = profile_.noise_figure_dB;
+    s.tx_power_dBm = profile_.tx_power_dBm;
+    s.frequency_accuracy_ppm = profile_.frequency_accuracy_ppm;
+    s.fft_gflops_per_sec = profile_.fft_gflops_per_sec;
     return s;
 }
 

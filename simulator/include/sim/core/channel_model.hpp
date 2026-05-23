@@ -1,6 +1,7 @@
 #pragma once
 
 #include "types.hpp"
+#include "sim_config.hpp"
 #include <memory>
 #include <random>
 #include <vector>
@@ -38,11 +39,11 @@ public:
 class BlockFadingChannel : public ChannelModel {
 public:
     struct Params {
-        double availability = 0.8;      // Probability that a link is not in deep fade
-        double avg_snr_db   = 20.0;     // Mean SNR when available (dB)
-        double snr_std_db   = 5.0;      // Standard deviation of SNR (dB)
-        double outage_snr_db = -10.0;   // SNR below which link is considered unusable
-        double bandwidth    = 10e6;     // Representative bandwidth (Hz) for capacity calc
+        double availability  = BF_LINK_AVAILABILITY;      
+        double avg_snr_db    = BF_AVG_SNR_DB;     // Mean SNR when available (dB)
+        double snr_std_db    = BF_SNR_STD_DB;      // Standard deviation of SNR (dB)
+        double outage_snr_db = BF_OUTAGE_SNR_DB ;   // SNR below which link is considered unusable
+        double bandwidth     = BF_BANDWIDTH_HZ;     // Representative bandwidth (Hz) for capacity calc
     };
 
     // Construct with parameters (copies, no allocation).
