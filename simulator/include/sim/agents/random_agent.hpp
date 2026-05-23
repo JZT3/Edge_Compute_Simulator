@@ -1,5 +1,6 @@
 #pragma once
 #include "../include/sim/agents/agent_interface.hpp"
+#include "../include/sim/core/sim_config.hpp"
 #include <random>
 
 namespace sigint_sim {
