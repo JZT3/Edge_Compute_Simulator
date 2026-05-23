@@ -7,6 +7,7 @@
 #include "../include/sim/agents/random_agent.hpp"
 #include "../include/sim/logging/logger.hpp"
 #include "../include/sim/core/scenario_loader.hpp"
+#include "../include/sim/core/sim_config.hpp"
 
 namespace py = pybind11;
 using namespace sigint_sim;
@@ -47,6 +48,10 @@ PYBIND11_MODULE(_sigint_sim_core, m) {
 
     // ---- quick diagnostic ----
     m.def("ping", []() { return "pong"; });
+
+    m.def("init_logger", [](const std::string& path) {
+        sigint_sim::Logger::init(path);
+    }, py::arg("log_file"), "Initialise the simulation log file.");
 
     // ---- factory for quick start (block‑fading, random agents) ----
     m.def(
@@ -91,11 +96,11 @@ PYBIND11_MODULE(_sigint_sim_core, m) {
             std::vector<EmitterDesc> emitters;
             EmitterDesc e;
             e.id = 0;
-            e.frequency_Hz = 2.4e9;
-            e.bandwidth_Hz = 100e3;
-            e.priority = 5;
-            e.active_start_s = 0.0;
-            e.active_end_s = duration;
+            e.frequency_Hz   = DEFAULT_EMITTER_FREQ_HZ;
+            e.bandwidth_Hz   = DEFAULT_EMITTER_BW_HZ;
+            e.priority       = DEFAULT_EMITTER_PRIORITY;
+            e.active_start_s = DEFAULT_EMITTER_START_S;
+            e.active_end_s   = duration;
             emitters.push_back(e);
             sim->setEmitters(emitters);
 
@@ -111,14 +116,26 @@ PYBIND11_MODULE(_sigint_sim_core, m) {
 
     // ---- scenario loader ----
     m.def("load_scenario",
-          [](const std::string& json_path) -> std::unique_ptr<Simulator> {
-              Scenario sc = sigint_sim::loadScenario(json_path);
-              auto sim = std::make_unique<Simulator>(sc.config);
-              sim->setEmitters(sc.emitters);
-              return sim;
-          },
-          py::arg("json_path"),
-          "Load a scenario JSON file and return a configured Simulator.");
+        [](const std::string& json_path) -> std::unique_ptr<Simulator> {
+            Scenario sc = sigint_sim::loadScenario(json_path);
+            auto sim = std::make_unique<Simulator>(sc.config);
+            sim->setEmitters(sc.emitters);
+            // Attach random agents
+            int node_count = 0;
+            for (const auto& edge : sc.config.topology_edges) {
+                node_count = std::max(node_count,
+                    std::max(static_cast<int>(edge.first),
+                            static_cast<int>(edge.second)));
+            }
+            node_count += 1;
+            for (int i = 0; i < node_count; ++i) {
+                auto agent = std::make_shared<RandomAgent>(sc.config.seed + i * 1000);
+                sim->setAgent(NodeId{i}, agent);
+            }
+            return sim;
+        },
+        py::arg("json_path"),
+        "Load a scenario JSON file and return a configured Simulator.");
     
     // ---- Trampoline Class Actions ----
     py::class_<Action::Burst>(m, "Burst")
@@ -222,4 +239,4 @@ PYBIND11_MODULE(_sigint_sim_core, m) {
             }
             return out;
         });
-}
+} //namespace sigint_sim
