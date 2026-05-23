@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 import logging
 from types import TracebackType
 from typing import Any, Dict, List, Optional, Type
@@ -21,18 +22,22 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _node_state_from_cpp(raw: Any) -> NodeState:
-    """Convert a _sigint_sim_core.NodeState to a Python NodeState."""
-    assert raw is not None, "Raw NodeState must not be None"
-    mode_int: int = getattr(raw, "mode", 0)
-    mode = NodeMode(mode_int)
+    assert raw is not None
+    mode_int = getattr(raw, "mode", 0)
     result = NodeState(
         id=getattr(raw, "id", -1),
         name=getattr(raw, "name", ""),
-        mode=mode,
+        mode=NodeMode(mode_int),
         buffer_size=getattr(raw, "buffer_size", 0),
         energy_used=getattr(raw, "energy_used", 0.0),
+        device_type=getattr(raw, "device_type", ""),
+        noise_figure_dB=getattr(raw, "noise_figure_dB", 0.0),
+        tx_power_dBm=getattr(raw, "tx_power_dBm", 0.0),
+        frequency_accuracy_ppm=getattr(raw, "frequency_accuracy_ppm", 0.0),
+        fft_gflops_per_sec=getattr(raw, "fft_gflops_per_sec", 0.0),
+        x=getattr(raw, "x", 0.0),
+        y=getattr(raw, "y", 0.0),
     )
-    assert result.id >= 0, f"Invalid node id: {result.id}"
     return result
 
 
@@ -94,6 +99,9 @@ class Simulator:
 
         try:
             from sigint_gui import _sigint_sim_core as _core
+            import os
+            os.makedirs("output", exist_ok=True)
+            _core.init_logger("output/sim_run.log") 
         except ImportError as exc:
             raise RuntimeError(
                 "Could not import _sigint_sim_core from sigint_gui. "
@@ -247,4 +255,27 @@ class Simulator:
             for i in range(n_nodes):
                 agent = _core.RandomAgent(12345 + i * 1000)  # need to expose RandomAgent in bindings
                 native_sim.setAgent(NodeId(i), agent)
+        return wrapper
+    
+    def _attach_default_agents(self) -> None:
+        """Attach a RandomAgent to every node, using the simulation seed."""
+        from sigint_gui import _sigint_sim_core as _core
+        node_count = len(self.get_node_states())
+        for i in range(node_count):
+            agent = _core.RandomAgent(self._config.seed + i * 1000)
+            self._native.set_agent(i, agent)
+    
+    @classmethod
+    def from_json(cls, json_path: str) -> "Simulator":
+        """Create a Simulator from a scenario JSON file."""
+        from sigint_gui import _sigint_sim_core as _core
+
+        # C++ load_scenario already attaches RandomAgents with deterministic seeds
+        native_sim = _core.load_scenario(json_path)
+        wrapper = cls.__new__(cls)
+        wrapper._native = native_sim
+        wrapper._event_log = []
+
+        # Provide a lightweight config for GUI reference (seed isn’t needed for agents)
+        wrapper._config = SimulatorConfig(seed=42)   # dummy, not used by agents
         return wrapper
