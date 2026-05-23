@@ -20,6 +20,8 @@ from PyQt5.QtWidgets import (
     QSpinBox,
     QVBoxLayout,
     QWidget,
+    QScrollArea,
+    QInputDialog,
 )
 
 from ..models import NodeMode, SimulatorConfig
@@ -38,7 +40,11 @@ class ParameterPanel(QWidget):
         super().__init__(parent)
         self._current_config = SimulatorConfig()
 
-        layout = QVBoxLayout(self)
+        # ------------------------------------------------------------------
+        # 1. Create the widget that will hold all the controls
+        # ------------------------------------------------------------------
+        content = QWidget()
+        layout = QVBoxLayout(content)          # everything goes into 'content'
 
         # --- Simulation settings ---
         sim_group = QGroupBox("Simulation Settings")
@@ -138,6 +144,20 @@ class ParameterPanel(QWidget):
         layout.addLayout(bottom_layout)
 
         layout.addStretch()
+        
+        # ------------------------------------------------------------------
+        # 2. Wrap the content widget in a QScrollArea
+        # ------------------------------------------------------------------
+        scroll = QScrollArea()
+        scroll.setWidget(content)
+        scroll.setWidgetResizable(True)
+        
+        # ------------------------------------------------------------------
+        # 3. Set the scroll area as the only widget of the panel
+        # ------------------------------------------------------------------
+        main_layout = QVBoxLayout(self)
+        main_layout.addWidget(scroll)
+        self.setLayout(main_layout)
 
         self._populate_nodes()
         self._populate_edges()
