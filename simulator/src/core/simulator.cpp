@@ -88,15 +88,60 @@ void Simulator::setAgent(NodeId id, std::shared_ptr<IAgent> agent) {
     agents_[static_cast<int>(id)] = std::move(agent);
 }
 
-// ---- Step ----
+// ---- Step --------
+// ---------------------------------------------------------------------------
+// Public stepping interface
+// ---------------------------------------------------------------------------
 void Simulator::step() {
     if (isFinished()) return;
     auto t_start = std::chrono::steady_clock::now();
 
-    // 0. Prepare per‑link parameters for sample‑processing channel
+    Logger::get()->debug("----------- step t={:.2f} -----------", current_time_);
+
+    // 0. Pre‑step housekeeping
     prepareChannelParams();
 
-    // 1. Update channel (may process samples pushed in previous step)
+    // 1. Physical layer
+    updateChannel();
+
+    // 2. Receive‑side processing
+    collectRxSamples();
+
+    // 3. Agent decisions
+    makeAgentDecisions();
+
+    // 4. Sensing / intelligence generation
+    runSensing();
+
+    // 5. Compute tasks (e.g., local signal processing)
+    processComputeTasks();
+
+    // 6. Transmission resolution & logging
+    resolveTransmissions();
+
+    // 7. Advance time
+    current_time_ += config_.timestep;
+
+    // 8. Step‑level metrics
+    auto t_end = std::chrono::steady_clock::now();
+    double elapsed_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_start).count();
+    updateStepMetrics(elapsed_us);
+}
+//keep
+int Simulator::runForSteps(int steps) {
+    int count_before = delivery_count_;
+    for (int i = 0; i < steps && !isFinished(); ++i) {
+        step();
+    }
+    return delivery_count_ - count_before;
+}
+
+// ---------------------------------------------------------------------------
+// Private helpers (each is a method of Simulator)
+// ---------------------------------------------------------------------------
+void Simulator::updateChannel() {
+    Logger::get()->debug("updateChannel start");
     auto link_states = collectLinkStates(links_);
     channel_->update(link_states, collectNodeStates(nodes_), rng_);
     for (size_t i = 0; i < links_.size(); ++i) {
@@ -105,13 +150,17 @@ void Simulator::step() {
                                      link_states[i].outage_prob,
                                      link_states[i].active);
     }
+    Logger::get()->debug("updateChannel end");
+}
 
-    // 2. Collect RX samples for all nodes (after channel processing)
+void Simulator::collectRxSamples() {
+    Logger::get()->debug("collectRxSamples start");
     for (auto& node : nodes_) {
         node->updateProcessing(config_.timestep);
     }
     for (size_t i = 0; i < nodes_.size(); ++i) {
-        double snr_sum = 0.0; int count = 0;
+        double snr_sum = 0.0;
+        int count = 0;
         for (const auto& link : links_) {
             if (link->to() == nodes_[i]->id() && link->getState().active) {
                 snr_sum += link->getState().snr;
@@ -121,13 +170,14 @@ void Simulator::step() {
         double avg_snr_db = count > 0 ? snr_sum / count : -200.0;
         double snr_linear = std::pow(10.0, avg_snr_db / 10.0);
         nodes_[i]->setLastSNR(snr_linear);
+    }
+    Logger::get()->debug("collectRxSamples end");
 }
 
-    // 3. Get fresh state snapshots
+void Simulator::makeAgentDecisions() {
+    Logger::get()->debug("makeAgentDecisions start");
     auto node_states = collectNodeStates(nodes_);
     auto latest_link_states = collectLinkStates(links_);
-
-    // 4. Agent decisions
     for (size_t i = 0; i < nodes_.size(); ++i) {
         auto& node = nodes_[i];
         auto it = agents_.find(static_cast<int>(node->id()));
@@ -139,24 +189,22 @@ void Simulator::step() {
                                                  latest_link_states, event_log_);
         node->applyAction(action);
         last_actions_[static_cast<int>(node->id())] = action;
-
     }
+    Logger::get()->debug("makeAgentDecisions end");
+}
 
-// ---- 5. Sensing (hardcoded emitter replaced by scenario emitters) ----
-    // We'll iterate over emitters_ (a new member std::vector<EmitterDesc> emitters_)
+void Simulator::runSensing() {
+    Logger::get()->debug("runSensing start");
     for (const auto& emitter : emitters_) {
         if (current_time_ >= emitter.active_start_s && current_time_ <= emitter.active_end_s) {
             for (auto& node : nodes_) {
                 if (node->getState().mode == NodeMode::SCAN) {
-                    // check frequency coverage (simplified: if center freq within 1% of emitter freq)
                     double node_freq = node->getState().current_rf.center_freq;
                     if (std::abs(node_freq - emitter.frequency_Hz) / emitter.frequency_Hz < 0.01) {
                         node->setSignalDetected(true);
-                        // inject synthetic IQ
                         std::vector<std::complex<float>> fake_signal(SYNTHETIC_SIGNAL_SAMPLES, {1.0f, 0.0f});
-                        double snr_linear = SYNTHETIC_SIGNAL_SNR_DB; // could compute from channel, but simplified
+                        double snr_linear = SYNTHETIC_SIGNAL_SNR_DB;
                         node->injectSyntheticSignal(fake_signal, snr_linear);
-                        // intelligence gain: add emitter priority
                         current_metrics_.cumulative_intelligence += emitter.priority;
                         Logger::get()->info("Intel += {}", emitter.priority);
                         Event ev;
@@ -171,16 +219,24 @@ void Simulator::step() {
             }
         }
     }
+    Logger::get()->debug("runSensing end");
+}
 
-    // 6. Process compute tasks
+void Simulator::processComputeTasks() {
+    Logger::get()->debug("processComputeTasks start");
     for (auto& node : nodes_) {
         node->updateProcessing(config_.timestep);
     }
+    Logger::get()->debug("processComputeTasks end");
+}
 
-   // 7. Transmission logging – using the action from the *previous* step
+void Simulator::resolveTransmissions() {
+    Logger::get()->debug("resolveTransmissions start");
     for (size_t i = 0; i < nodes_.size(); ++i) {
         const auto& node = nodes_[i];
         int nid = static_cast<int>(node->id());
+        Logger::get()->debug("resolveTransmissions node {}", nid);
+
         auto it = last_actions_.find(nid);
         if (it == last_actions_.end()) continue;
         const Action& last_action = it->second;
@@ -200,8 +256,6 @@ void Simulator::step() {
                 ev.type = "TransmissionSuccess";
                 ev.params["to"] = static_cast<double>(target);
                 ev.params["capacity_mbps"] = link->getState().capacity_bps / 1e6;
-
-                // Reliable debug: prints only when success is found
                 Logger::get()->info("TX success: node {} -> {} | SNR {:.1f} dB | Cap {:.1f} Mbps",
                                     nid, target, link->getState().snr,
                                     link->getState().capacity_bps / 1e6);
@@ -215,25 +269,34 @@ void Simulator::step() {
             Logger::get()->info("TX fail: node {} -> {} (no active link)", nid, target);
         }
 
-        // ---------- Metrics (once per attempt) ----------
         current_metrics_.transmissions_attempted++;
         if (found_active) {
             current_metrics_.transmissions_succeeded++;
         } else {
-            current_metrics_.lpd_violations++;               // only count failures? or all? keep all for now
+            current_metrics_.lpd_violations++;
         }
-        // LPD penalty – pay it on EVERY transmission (attempt)
         current_metrics_.cumulative_intelligence -= LPD_PENALTY_PER_TX;
-        current_metrics_.lpd_violations++;   // every TX is a violation in this simple model
+        current_metrics_.lpd_violations++;
 
         logEvent(ev);
+
+        // --- RL reward hook (enabled) ---
+        if (found_active) {
+            auto agent_it = agents_.find(nid);
+            if (agent_it != agents_.end() && agent_it->second->isRLAgent()) {
+                static uint32_t next_pkt_id = 1;
+                agent_it->second->processLocalAck(next_pkt_id++, 1.0, static_cast<int>(current_time_));
+                if (NodeId{target} == sink_node_id_) {
+                    ++delivery_count_;
+                }
+            }
+        }
     }
+    Logger::get()->debug("resolveTransmissions end");
+}
 
-    // 8. Advance time
-    current_time_ += config_.timestep;
-
-    auto t_end = std::chrono::steady_clock::now();
-    current_metrics_.step_execution_time_us = std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_start).count();
+void Simulator::updateStepMetrics(double wall_time_us) {
+    current_metrics_.step_execution_time_us = wall_time_us;
     metrics_history_.push_back(current_metrics_);
 }
 
@@ -285,12 +348,13 @@ void Simulator::prepareChannelParams() {
     }
 }
 
-// ---- Node lookup helper ----
-SDRNode* Simulator::getNodeById(int id) {
-    for (auto& n : nodes_) {
-        if (static_cast<int>(n->id()) == id) return n.get();
+    // ---- Node lookup helper ----
+    SDRNode* Simulator::getNodeById(int id) {
+        for (auto& n : nodes_) {
+            if (static_cast<int>(n->id()) == id) return n.get();
+        }
+        return nullptr;
     }
-    return nullptr;
-}
+
 
 } // namespace sigint_sim

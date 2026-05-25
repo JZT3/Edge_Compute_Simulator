@@ -44,6 +44,8 @@ public:
     [[nodiscard]] TimePoint currentTime() const noexcept { return current_time_; }
     [[nodiscard]] bool isFinished() const noexcept { return current_time_ >= config_.duration; }
 
+
+
 private:
     Config config_;
     std::vector<std::unique_ptr<SDRNode>> nodes_;
@@ -69,6 +71,29 @@ private:
     MetricsHistory metrics_history_;
     std::vector<EmitterDesc> emitters_;   // active emitter descriptions
 
+private:
+    // --- step phases -------------------------------------------------------
+    void updateChannel();
+    void collectRxSamples();
+    void makeAgentDecisions();
+    void runSensing();
+    void processComputeTasks();
+    void resolveTransmissions();
+    void updateStepMetrics(double wall_time_us);
+    void logTransitionEvents();
+
+public:
+        // Run up to *steps* timesteps (or until finished).  Returns the number
+    // of successful deliveries to the sink that occurred during these steps.
+    int runForSteps(int steps);
+
+    // Return the total number of deliveries to the sink so far.
+    int getDeliveryCount() const noexcept { return delivery_count_; }
+
+private:
+    int delivery_count_ = 0;
+    NodeId sink_node_id_ = NodeId{0};   // default sink is node 0
+    std::vector<Action> last_action_for_node_;
 };
 
 } // namespace sigint_sim
