@@ -34,12 +34,22 @@ class ParameterPanel(QWidget):
     """A dockable panel for customising the simulation."""
 
     # Emitted when the user wants to apply a new topology.
-    config_changed = pyqtSignal(SimulatorConfig)
+    config_changed = pyqtSignal(SimulatorConfig, str)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._current_config = SimulatorConfig()
-
+        
+        # ------------------------------------------------------------------
+        # 0. Create mutable variables to circumvent frozen class
+        # ------------------------------------------------------------------
+        self._current_params: dict = {
+        "seed": 42, "duration": 10.0,
+        "topology": [(0,1),(1,0)],
+        "availability": 0.9, "avg_snr_db": 20.0
+        }
+        self._current_config = SimulatorConfig(**self._current_params)
+        
         # ------------------------------------------------------------------
         # 1. Create the widget that will hold all the controls
         # ------------------------------------------------------------------
@@ -145,6 +155,16 @@ class ParameterPanel(QWidget):
 
         layout.addStretch()
         
+        #---- Agent Selection ------
+        self._agent_combo = QComboBox()
+        self._agent_combo.addItems(["Random", "Gossip", "DTN", "HQL"])
+        agent_layout = QFormLayout()
+        agent_layout.addRow("Agent:", self._agent_combo)
+        agent_group = QGroupBox("Agent")
+        agent_group.setLayout(agent_layout)
+        layout.addWidget(agent_group) 
+        
+        
         # ------------------------------------------------------------------
         # 2. Wrap the content widget in a QScrollArea
         # ------------------------------------------------------------------
@@ -179,8 +199,11 @@ class ParameterPanel(QWidget):
         self._node_list.blockSignals(False)
 
     def _populate_edges(self) -> None:
-        # No list needed, just ensure combos are updated (already done in _populate_nodes)
-        pass
+        self._from_combo.clear()
+        self._to_combo.clear()
+        for nid in sorted(self._current_config.topology_nodes()):
+            self._from_combo.addItem(str(nid), nid)
+            self._to_combo.addItem(str(nid), nid)
 
     # ------------------------------------------------------------------
     # Node editing
@@ -241,21 +264,25 @@ class ParameterPanel(QWidget):
 
     def _add_edge(self) -> None:
         from_id = self._from_combo.currentData()
-        to_id = self._to_combo.currentData()
+        to_id   = self._to_combo.currentData()
         if from_id is None or to_id is None or from_id == to_id:
             return
-        if (from_id, to_id) not in self._current_config.topology:
-            self._current_config.topology.append((from_id, to_id))
+        topo = list(self._current_params["topology"])
+        if (from_id, to_id) not in topo:
+            topo.append((from_id, to_id))
+            self._current_params["topology"] = topo
             self._emit_config()
 
     def _remove_edge(self) -> None:
         from_id = self._from_combo.currentData()
-        to_id = self._to_combo.currentData()
+        to_id   = self._to_combo.currentData()
         if from_id is None or to_id is None:
             return
         edge = (from_id, to_id)
-        if edge in self._current_config.topology:
-            self._current_config.topology.remove(edge)
+        topo = list(self._current_params["topology"])   # work on a mutable copy
+        if edge in topo:
+            topo.remove(edge)
+            self._current_params["topology"] = topo
             self._emit_config()
 
     # ------------------------------------------------------------------
@@ -263,17 +290,58 @@ class ParameterPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _emit_config(self) -> None:
-        self._current_config.seed = self._seed_spin.value()
-        self._current_config.duration = self._dur_spin.value()
-        self._current_config.availability = self._avail_spin.value()
-        self._current_config.avg_snr_db = self._snr_spin.value()
-        self.config_changed.emit(self._current_config)
+        self._current_params["seed"] = self._seed_spin.value()
+        self._current_params["duration"] = self._dur_spin.value()
+        self._current_params["availability"] = self._avail_spin.value()
+        self._current_params["avg_snr_db"] = self._snr_spin.value()
+        # topology is updated separately via add/remove edge methods
+        self._current_config = SimulatorConfig(**self._current_params)
+        self.config_changed.emit(self._current_config, self._agent_combo.currentText())
 
     def _reset_to_default(self) -> None:
-        self._current_config = SimulatorConfig()
+        default_cfg = SimulatorConfig()                     # fresh frozen config
+        self._current_params = {
+            "seed": default_cfg.seed,
+            "duration": default_cfg.duration,
+            "topology": list(default_cfg.topology),         # deep copy the list
+            "availability": default_cfg.availability,
+            "avg_snr_db": default_cfg.avg_snr_db,
+        }
+        # Update widgets to match
+        self._seed_spin.setValue(self._current_params["seed"])
+        self._dur_spin.setValue(self._current_params["duration"])
+        self._avail_spin.setValue(self._current_params["availability"])
+        self._snr_spin.setValue(self._current_params["avg_snr_db"])
         self._populate_nodes()
-        self._seed_spin.setValue(self._current_config.seed)
-        self._dur_spin.setValue(self._current_config.duration)
-        self._avail_spin.setValue(self._current_config.availability)
-        self._snr_spin.setValue(self._current_config.avg_snr_db)
+        self._populate_edges()
         self._emit_config()
+        
+    def load_from_dict(self, data: dict) -> None:
+        # Update mutable parameters
+        self._current_params["seed"]        = data.get("seed", 42)
+        self._current_params["duration"]    = data.get("duration", 10.0)
+        self._current_params["timestep"]    = data.get("timestep", 0.2)
+        self._current_params["availability"] = data.get("availability", 0.9)
+        self._current_params["avg_snr_db"]  = data.get("avg_snr_db", 20.0)
+
+        topo = data.get("topology_edges") or data.get("topology", [(0,1),(1,0)])
+        self._current_params["topology"] = [tuple(e) for e in topo]
+
+        # Agent type
+        agent = data.get("agent_type", "Random")
+        idx = self._agent_combo.findText(agent)
+        if idx >= 0:
+            self._agent_combo.setCurrentIndex(idx)
+
+        # ★ Rebuild the frozen config from the updated params
+        self._current_config = SimulatorConfig(**self._current_params)
+
+        # Update UI widgets
+        self._seed_spin.setValue(self._current_params["seed"])
+        self._dur_spin.setValue(self._current_params["duration"])
+        self._avail_spin.setValue(self._current_params["availability"])
+        self._snr_spin.setValue(self._current_params["avg_snr_db"])
+
+        # Populate node list and edge combos from the new config
+        self._populate_nodes()
+        # (edge combos are already repopulated inside _populate_nodes)
