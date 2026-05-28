@@ -8,17 +8,16 @@
 #include <algorithm>
 #include <cmath>
 #include <chrono>
+#include <ranges>
 
 namespace sigint_sim {
 
 // ---- Helpers ----
 static std::vector<LinkState> collectLinkStates(const std::vector<std::unique_ptr<Link>>& links) {
-    std::vector<LinkState> states;
-    states.reserve(links.size());
-    for (const auto& l : links) states.push_back(l->getState());
-    return states;
+    return links
+        | std::views::transform([](const auto& l) { return l->getState(); })
+        | std::ranges::to<std::vector>();
 }
-
 static std::vector<NodeState> collectNodeStates(const std::vector<std::unique_ptr<SDRNode>>& nodes) {
     std::vector<NodeState> states;
     states.reserve(nodes.size());
@@ -31,45 +30,64 @@ Simulator::Simulator(Config config)
     : config_(std::move(config)),
       channel_(config_.channel),
       rng_(config_.seed),
-      current_time_(0.0)
+      current_time_(0.0),
+      next_pkt_id_(1)
 {
     assert(config_.timestep > 0.0 && "Timestep must be positive");
     assert(config_.duration > 0.0 && "Duration must be positive");
     assert(config_.channel && "Channel model must not be null");
 
-    // Determine node count from edges
+    // ----- Determine node count from topology edges -----
     int max_node_id = -1;
-    for (const auto& [from, to] : config_.topology_edges) {
-        max_node_id = std::max(max_node_id, std::max(static_cast<int>(from), static_cast<int>(to)));
+    for (const auto& edge : config_.topology_edges) {
+        max_node_id = std::max(max_node_id,
+            std::max(static_cast<int>(edge.first), static_cast<int>(edge.second)));
     }
     const int num_nodes = max_node_id + 1;
+    nodes_.reserve(num_nodes);
 
     // Detect if we're using the sample‑processing channel
     auto* sample_channel = dynamic_cast<SampleProcessingChannel*>(channel_.get());
 
     for (int i = 0; i < num_nodes; ++i) {
-        ComputeCapability cap{1e9, 0.0, 1ull * 1024 * 1024 * 1024};
-        std::vector<Frequency> bands = {100e6, 2.4e9};
-
-        // Profile and position from config, or defaults
-        HardwareProfile prof;
-        if (config_.node_profiles.count(i)) prof = config_.node_profiles.at(i);
-        double x = 0.0, y = 0.0;
-        if (config_.node_positions.count(i)) {
-            x = config_.node_positions.at(i).first;
-            y = config_.node_positions.at(i).second;
+        // --- Hardware profile ---
+        HardwareProfile profile;   // default‑constructed if not found
+        auto prof_it = config_.node_profiles.find(i);
+        if (prof_it != config_.node_profiles.end()) {
+            profile = prof_it->second;
         }
 
-        // Derive a deterministic seed for the node's internal RNG
+        // --- Position ---
+        double x = 0.0, y = 0.0;
+        auto pos_it = config_.node_positions.find(i);
+        if (pos_it != config_.node_positions.end()) {
+            x = pos_it->second.first;
+            y = pos_it->second.second;
+        }
+
+        // --- Compute capability (derived from profile) ---
+        ComputeCapability cap;
+        cap.fft_ops_per_sec = profile.fft_gflops_per_sec * 1e9;   // convert GFLOPS → ops/s
+        cap.gpu_tops = 0.0;
+        cap.memory_bytes = static_cast<size_t>(profile.memory_mib) * 1024 * 1024;
+
+        std::vector<Frequency> bands = {100e6, 2.4e9};
+
         uint64_t node_seed = config_.seed + static_cast<uint64_t>(i) * 1000;
-        auto node = std::make_unique<SDRNode>(NodeId{i}, "Node_" + std::to_string(i),
-                                              cap, bands, x, y, prof, node_seed);
-        // If sample channel, create a VirtualRadio and inject it
+
+        auto node = std::make_unique<SDRNode>(
+            NodeId{i}, "Node_" + std::to_string(i),
+            cap, bands,
+            x, y, profile, node_seed
+        );
+
+        // If sample‑processing channel, attach a VirtualRadio and register profile
         if (sample_channel) {
             auto radio = std::make_unique<VirtualRadio>(*sample_channel, i);
             node->setRadio(std::move(radio));
-            sample_channel->setNodeProfile(i, prof);
+            sample_channel->setNodeProfile(i, profile);
         }
+
         nodes_.push_back(std::move(node));
     }
 
@@ -142,6 +160,8 @@ int Simulator::runForSteps(int steps) {
 // ---------------------------------------------------------------------------
 void Simulator::updateChannel() {
     Logger::get()->debug("updateChannel start");
+
+    // 1. Physical channel (distance‑aware or block‑fading)
     auto link_states = collectLinkStates(links_);
     channel_->update(link_states, collectNodeStates(nodes_), rng_);
     for (size_t i = 0; i < links_.size(); ++i) {
@@ -150,6 +170,12 @@ void Simulator::updateChannel() {
                                      link_states[i].outage_prob,
                                      link_states[i].active);
     }
+
+    // 2. Gilbert‑Elliott per‑link state evolution
+    for (auto& link : links_) {
+        link->updateGilbertElliott(rng_);
+    }
+
     Logger::get()->debug("updateChannel end");
 }
 
@@ -189,6 +215,14 @@ void Simulator::makeAgentDecisions() {
                                                  latest_link_states, event_log_);
         node->applyAction(action);
         last_actions_[static_cast<int>(node->id())] = action;
+
+        // Record transmit frequency for interference checking
+        if (action.burst.has_value() && action.scan_params.has_value()) {
+            last_tx_freq_[static_cast<int>(node->id())] =
+                action.scan_params->center_freq;
+        } else {
+            last_tx_freq_.erase(static_cast<int>(node->id()));
+        }
     }
     Logger::get()->debug("makeAgentDecisions end");
 }
@@ -232,6 +266,7 @@ void Simulator::processComputeTasks() {
 
 void Simulator::resolveTransmissions() {
     Logger::get()->debug("resolveTransmissions start");
+
     for (size_t i = 0; i < nodes_.size(); ++i) {
         const auto& node = nodes_[i];
         int nid = static_cast<int>(node->id());
@@ -246,53 +281,113 @@ void Simulator::resolveTransmissions() {
         ev.time = current_time_;
         ev.node_id = nid;
         int target = last_action.burst->target_node_id;
-        bool found_active = false;
+        bool success = false;
 
+        // 1. Locate the target link
+        const Link* target_link = nullptr;
         for (const auto& link : links_) {
             if (link->from() == node->id() &&
-                link->to() == NodeId{target} &&
-                link->getState().active) {
-                found_active = true;
-                ev.type = "TransmissionSuccess";
-                ev.params["to"] = static_cast<double>(target);
-                ev.params["capacity_mbps"] = link->getState().capacity_bps / 1e6;
-                Logger::get()->info("TX success: node {} -> {} | SNR {:.1f} dB | Cap {:.1f} Mbps",
-                                    nid, target, link->getState().snr,
-                                    link->getState().capacity_bps / 1e6);
+                link->to() == NodeId{target}) {
+                target_link = link.get();
                 break;
             }
         }
 
-        if (!found_active) {
+        if (!target_link) {
             ev.type = "TransmissionFail";
-            ev.params["reason"] = 0;
-            Logger::get()->info("TX fail: node {} -> {} (no active link)", nid, target);
-        }
-
-        current_metrics_.transmissions_attempted++;
-        if (found_active) {
-            current_metrics_.transmissions_succeeded++;
+            ev.params["reason"] = 1;   // no such link
+            Logger::get()->info("TX fail: node {} -> {} (no link)", nid, target);
+            logEvent(ev);
+            // no lpd increment here
         } else {
-            current_metrics_.lpd_violations++;
-        }
-        current_metrics_.cumulative_intelligence -= LPD_PENALTY_PER_TX;
-        current_metrics_.lpd_violations++;
+            // 2. Physical layer checks: SNR and Gilbert‑Elliott
+            bool snr_ok = target_link->getState().active;
+            bool ge_ok  = target_link->isGEActive();
+            if (!snr_ok || !ge_ok) {
+                ev.type = "TransmissionFail";
+                ev.params["reason"] = 2;   // poor channel
+                Logger::get()->info("TX fail: node {} -> {} (SNR/GE bad)", nid, target);
+                logEvent(ev);
+            } else {
+                // 3. Interference check
+                double my_freq = 2.4e9; // fallback
+                auto freq_it = last_tx_freq_.find(nid);
+                if (freq_it != last_tx_freq_.end())
+                    my_freq = freq_it->second;
 
-        logEvent(ev);
+                bool interfered = false;
+                for (const auto& other_node : nodes_) {
+                    if (other_node->id() == node->id()) continue;
+                    int other_id = static_cast<int>(other_node->id());
+                    auto other_it = last_actions_.find(other_id);
+                    if (other_it == last_actions_.end()) continue;
+                    const Action& other_action = other_it->second;
+                    if (!other_action.burst) continue;
 
-        // --- RL reward hook (enabled) ---
-        if (found_active) {
+                    double other_freq = 2.4e9;
+                    auto ofreq_it = last_tx_freq_.find(other_id);
+                    if (ofreq_it != last_tx_freq_.end())
+                        other_freq = ofreq_it->second;
+
+                    if (std::abs(my_freq - other_freq) < 100e3) {
+                        interfered = true;
+                        break;
+                    }
+                }
+
+                if (interfered) {
+                    ev.type = "TransmissionFail";
+                    ev.params["reason"] = 3;   // interference
+                    Logger::get()->info("TX fail: node {} -> {} (interference)", nid, target);
+                    logEvent(ev);
+                } else {
+                    // All checks passed
+                    success = true;
+                    ev.type = "TransmissionSuccess";
+                    ev.params["to"] = static_cast<double>(target);
+                    ev.params["capacity_mbps"] =
+                        target_link->getState().capacity_bps / 1e6;
+                    Logger::get()->info(
+                        "TX success: node {} -> {} | SNR {:.1f} dB | Cap {:.1f} Mbps",
+                        nid, target, target_link->getState().snr,
+                        target_link->getState().capacity_bps / 1e6);
+                    logEvent(ev);
+
+            //RL Reward Hook
             auto agent_it = agents_.find(nid);
             if (agent_it != agents_.end() && agent_it->second->isRLAgent()) {
-                static uint32_t next_pkt_id = 1;
-                agent_it->second->processLocalAck(next_pkt_id++, 1.0, static_cast<int>(current_time_));
+                // Use the monotonic packet-ID counter (member of Simulator)
+                uint32_t pkt_id = next_pkt_id_++;
+                // Local ACK for the transmitter
+                agent_it->second->processLocalAck(pkt_id, 1.0,
+                                                static_cast<int>(current_time_));
+                // Sink delivery – broadcast sink summary to ALL RL agents
                 if (NodeId{target} == sink_node_id_) {
                     ++delivery_count_;
+                    // Every RL agent receives the sink summary; those that didn't
+                    // originate the packet will simply ignore it.
+                    for (auto& [id, agent] : agents_) {
+                        if (agent->isRLAgent()) {
+                            agent->processSinkSummary({{pkt_id, 1.0}},
+                                                    static_cast<int>(current_time_));
+                        }
+                    }
                 }
             }
         }
+
+        // Common metrics – executed for every transmission attempt
+        current_metrics_.transmissions_attempted++;
+        if (success) {
+            current_metrics_.transmissions_succeeded++;
+        }
+        // Exactly one LPD violation per transmission (success or failure)
+        current_metrics_.lpd_violations++;
+        current_metrics_.cumulative_intelligence -= LPD_PENALTY_PER_TX;
     }
     Logger::get()->debug("resolveTransmissions end");
+}
+}
 }
 
 void Simulator::updateStepMetrics(double wall_time_us) {
@@ -304,6 +399,8 @@ void Simulator::updateStepMetrics(double wall_time_us) {
 void Simulator::reset(uint64_t new_seed) {
     current_time_ = 0.0;
     event_log_.clear();
+    delivery_count_ = 0;
+    next_pkt_id_ = 1;
     rng_.seed(new_seed);
 }
 
