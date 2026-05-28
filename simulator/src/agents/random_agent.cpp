@@ -8,8 +8,8 @@ namespace sigint_sim {
 RandomAgent::RandomAgent(uint64_t seed) : rng_(seed) {}
 
 Action RandomAgent::selectAction(const NodeState& my_state,
-                                 const std::vector<NodeState>& all_states,
-                                 const std::vector<LinkState>& links,
+                                 std::span<const NodeState>,
+                                 std::span<const LinkState> links,
                                  const EventLog& /*recent_events*/) {
     // Weighted action distribution – idempotent, safe against zero sum
     std::array<double, 4> weights = {
@@ -28,8 +28,10 @@ Action RandomAgent::selectAction(const NodeState& my_state,
     switch (mode) {
         case 0: break; // IDLE
         case 1: { // SCAN
+            std::uniform_real_distribution<double> freq_dist(
+                my_state.min_freq_hz, my_state.max_freq_hz);
             RFParams scan;
-            scan.center_freq = AGENT_SCAN_FREQ_HZ;
+            scan.center_freq = freq_dist(rng_);
             scan.bandwidth    = AGENT_SCAN_BW_HZ;
             scan.gain         = AGENT_SCAN_GAIN_DB;
             scan.sample_rate  = AGENT_SCAN_SAMPLE_RATE_HZ;
