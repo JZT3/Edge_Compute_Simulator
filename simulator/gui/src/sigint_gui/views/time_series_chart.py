@@ -1,49 +1,81 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QCheckBox, QHBoxLayout
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from typing import Optional, List
+
 
 class TimeSeriesChart(QWidget):
-    def __init__(self, title="Cumulative Intelligence", parent=None):
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setMinimumSize(400, 250)
         
-        self.figure = Figure(figsize=(5, 3), dpi=100)
-        self.canvas = FigureCanvasQTAgg(self.figure)
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.canvas)
-        
-        # Primary axis (Mission Value)
+        # ---- Matplotlib setup ----
+        self.figure = Figure(figsize=(8, 4))
+        self.canvas = FigureCanvas(self.figure)
         self.ax = self.figure.add_subplot(111)
-        self.ax.set_xlabel("Simulation Time (s)")
-        self.ax.set_ylabel("Mission Value (net intel)")
-        
-        # Secondary axis (TX Success Rate)
         self.ax2 = self.ax.twinx()
-        self.ax2.set_ylabel("TX Success Rate (%)")
-        
-        # Lines
-        self.line_mission, = self.ax.plot([], [], 'b-', label="Mission Value")
-        self.line_success, = self.ax2.plot([], [], 'r--', label="TX Success Rate")
 
-        # Legends
-        self.ax.legend(loc='upper left')
-        self.ax2.legend(loc='upper right')
+        # Four empty lines (data set later)
+        (self.line_raw,)     = self.ax.plot([], [], 'g-',  label='Raw Intel')
+        (self.line_net,)     = self.ax.plot([], [], 'b-',  label='Net Mission')
+        (self.line_lpd,)     = self.ax.plot([], [], 'r-',  label='LPD Penalty')
+        (self.line_success,) = self.ax2.plot([], [], 'k--', label='TX Success %')
 
-    def update_data(self, x, y_mission, y_success):
-        """Update both curves.
+        self.ax.set_xlabel('Time (s)')
+        self.ax.set_ylabel('Intelligence')
+        self.ax2.set_ylabel('Success Rate (%)')
+        self.ax2.set_ylim(-5, 105)
 
-        Args:
-            x: list of simulation times.
-            y_mission: list of cumulative mission values.
-            y_success: list of transmission success rates (0‑100).
-        """
-        self.line_mission.set_data(x, y_mission)
-        self.line_success.set_data(x, y_success)
+        # Combine lines for legend & toggles
+        self._all_lines = [self.line_raw, self.line_net, self.line_lpd, self.line_success]
+        labels = [line.get_label() for line in self._all_lines]
+        self.ax.legend(self._all_lines, labels, loc='upper left')
 
-        # Adjust y-limits for success rate to always show 0-100
-        self.ax2.set_ylim(-5, 105)   # fixed range for percentage
+        # ---- Checkboxes (horizontal) ----
+        check_layout = QHBoxLayout()
+        for line in self._all_lines:
+            cb = QCheckBox(line.get_label())
+            cb.setChecked(True)
+            # Use default argument to capture current line correctly
+            cb.toggled.connect(lambda checked, l=line: self._on_toggle_line(l, checked))
+            check_layout.addWidget(cb)
+
+        # ---- Main layout ----
+        main_layout = QVBoxLayout(self)
+        main_layout.addWidget(self.canvas)
+        main_layout.addLayout(check_layout)
+
+    # ------------------------------------------------------------------
+    # Toggle line visibility & redraw
+    # ------------------------------------------------------------------
+    def _on_toggle_line(self, line, visible: bool) -> None:
+        line.set_visible(visible)
+        self.canvas.draw_idle()
+
+    # ------------------------------------------------------------------
+    # Clear all data and reset the axes
+    # ------------------------------------------------------------------
+    def reset_chart(self) -> None:
+        for line in self._all_lines:
+            line.set_data([], [])
+        self.ax.relim()
+        self.ax.autoscale_view()
+        self.ax2.relim()
+        self.ax2.autoscale_view()
+        self.canvas.draw_idle()
+
+    # ------------------------------------------------------------------
+    # Update the lines with *complete* new data arrays
+    # ------------------------------------------------------------------
+    def update_data(self, times: List[float], raw: List[float],
+                    lpd: List[float], net: List[float], success: List[float]) -> None:
+        """Replace the entire data set of all lines and refresh."""
+        self.line_raw.set_data(times, raw)
+        self.line_net.set_data(times, net)
+        self.line_lpd.set_data(times, lpd)
+        self.line_success.set_data(times, success)
 
         self.ax.relim()
         self.ax.autoscale_view()
-
+        self.ax2.relim()
+        self.ax2.autoscale_view()
         self.canvas.draw_idle()

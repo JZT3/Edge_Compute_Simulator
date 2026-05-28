@@ -21,8 +21,8 @@ SDRNode::SDRNode(NodeId id, std::string name, ComputeCapability cap,
                  HardwareProfile profile,
                  uint64_t seed)
     : id_(std::move(id)), name_(std::move(name)), compute_(std::move(cap)),
-      bands_(std::move(bands)), x_(x), y_(y), profile_(std::move(profile)),
-      rng_(seed)
+      bands_(std::move(bands)), x_(x), y_(y),rng_(seed), profile_(std::move(profile))
+      
 {
     assert(!name_.empty() && "Node name must not be empty");
     assert(!bands_.empty() && "Node must support at least one frequency band");
@@ -141,6 +141,8 @@ NodeState SDRNode::getState() const noexcept {
     s.energy_used = energy_used_;
     s.x = x_;
     s.y = y_;
+    s.min_freq_hz = profile_.min_freq_hz;
+    s.max_freq_hz = profile_.max_freq_hz;
 
     s.device_type = profile_.deviceTypeToString();   // add a helper to convert enum to string
     s.noise_figure_dB = profile_.noise_figure_dB;
@@ -155,6 +157,17 @@ void SDRNode::setSignalDetected(bool detected) noexcept {
     has_unprocessed_signal_ = detected;
     if (detected) buffer_size_ = 1;
     else          buffer_size_ = 0;
+}
+
+inline std::string deviceTypeToString(DeviceType t) {
+    switch (t) {
+        case DeviceType::RTL_SDR:   return "RTL_SDR";
+        case DeviceType::HACKRF:    return "HACKRF";
+        case DeviceType::LIME_SDR:  return "LIME_SDR";
+        case DeviceType::USRP_B2XX: return "USRP_B2XX";
+        case DeviceType::USRP_X3XX: return "USRP_X3XX";
+        default:                    return "VIRTUAL";
+    }
 }
 
 } // namespace sigint_sim

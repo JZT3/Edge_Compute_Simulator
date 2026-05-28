@@ -18,6 +18,13 @@ MIN_SPEED_MS: int = 10
 MAX_SPEED_MS: int = 1000
 DEFAULT_SPEED_MS: int = 100
 
+from sigint_gui._sigint_sim_core import (
+    create_default_simulator,
+    create_hql_simulator,
+    create_gossip_simulator,
+    create_dtn_simulator,
+)
+
 
 class _SimulationWorker(QObject):
     """Worker object that runs the simulation loop on a separate thread."""
@@ -26,14 +33,15 @@ class _SimulationWorker(QObject):
     state_ready = pyqtSignal(list, list, float)  # nodes, links, sim_time
     finished = pyqtSignal()
     error_occurred = pyqtSignal(str)
-    metrics_ready = pyqtSignal(dict)  
+    metrics_ready = pyqtSignal(dict, float)
 
     def __init__(self, sim: Simulator, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
         self._sim = sim
         self._running = False
+        self._stop_requested = False
         self._mutex = QMutex()
-        self._step_interval_ms: int = DEFAULT_SPEED_MS
+        self._step_interval_ms: int = DEFAULT_SPEED_MS    
 
     # ------------------------------------------------------------------
     # Public API (called from controller thread, thread‑safe)
@@ -45,6 +53,12 @@ class _SimulationWorker(QObject):
 
     def request_pause(self) -> None:
         with QMutexLocker(self._mutex):
+            self._running = False
+            
+    def request_stop(self) -> None:
+        """Signal the worker to exit its main loop."""
+        with QMutexLocker(self._mutex):
+            self._stop_requested = True
             self._running = False
 
     def set_interval(self, ms: int) -> None:
@@ -63,27 +77,25 @@ class _SimulationWorker(QObject):
 
     def run_loop(self) -> None:
         """Infinite loop that processes steps while _running is True."""
+        
         assert self._sim is not None, "Simulator must be set before starting loop"
-
+        finished_normally = False
         while True:
-            # Check if we should keep running
             with QMutexLocker(self._mutex):
-                running = self._running
-                interval = self._step_interval_ms
+                if self._stop_requested:
+                    break
+                running, interval = self._running, self._step_interval_ms
 
             if not running:
-                # Sleep a bit to avoid busy‑waiting
                 QThread.msleep(50)
                 continue
 
             if self._sim.is_finished:
-                # Emit final state and stop
                 self._emit_state()
-                self.finished.emit()
+                finished_normally = True
                 break
 
             try:
-                # Advance by one timestep; C++ step() releases GIL
                 self._sim.step(1)
                 self._emit_state()
             except Exception as exc:
@@ -92,6 +104,9 @@ class _SimulationWorker(QObject):
                 break
 
             QThread.msleep(interval)
+
+        if finished_normally:
+            self.finished.emit()
 
     def run_single_step(self) -> None:
         """Execute a single step (used for manual stepping)."""
@@ -113,9 +128,7 @@ class _SimulationWorker(QObject):
         self.state_ready.emit(nodes, links, self._sim.current_time)
         
         metrics = self._sim.get_metrics()  # dict
-        self.metrics_ready.emit(metrics)
-
-
+        self.metrics_ready.emit(metrics, self._sim.current_time)
 
 # ---------------------------------------------------------------------------
 # SimulatorController – public API for the GUI
@@ -133,7 +146,7 @@ class SimulatorController(QObject):
     state_updated = pyqtSignal(list, list, float)
     finished = pyqtSignal()
     error_occurred = pyqtSignal(str)
-    metrics_updated = pyqtSignal(dict)
+    metrics_updated = pyqtSignal(dict, float)
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -149,19 +162,34 @@ class SimulatorController(QObject):
     def sim(self):
         return self._sim
 
-    def load_scenario(self, config: SimulatorConfig) -> None:
-        """Create a new simulator and prepare the worker thread.
+    def load_scenario(self, config: SimulatorConfig, agent_type: str = "Random") -> None:
+        """Stop any running simulation, create a new simulator with the given agent type,
+        and prepare the worker thread (but do not start it yet)."""
+        # 1. Stop previous run
+        self.stop()
 
-        Precondition: no simulation is currently running.
-        """
-        assert isinstance(config, SimulatorConfig), "Expected SimulatorConfig"
-        assert self._thread is None or not self._thread.isRunning(), (
-            "Must stop previous simulation before loading a new one"
+        # 2. Build the C++ simulator using the chosen agent factory
+        kwargs = dict(
+            seed=config.seed,
+            duration=config.duration,
+            topology=config.topology,
+            availability=config.availability,
+            avg_snr_db=config.avg_snr_db,
         )
+        if agent_type == "HQL":
+            # hql_config defaults are handled inside the binding when dict is empty
+            cpp_sim = create_hql_simulator(**kwargs)
+        elif agent_type == "Gossip":
+            cpp_sim = create_gossip_simulator(**kwargs)
+        elif agent_type == "DTN":
+            cpp_sim = create_dtn_simulator(**kwargs)
+        else:  # Random
+            cpp_sim = create_default_simulator(**kwargs)
 
-        if self._sim is not None:
-            self._sim.close()
-        self._sim = Simulator(config)
+        # 3. Wrap the C++ object in our Python Simulator (which adds type hints, context manager, etc.)
+        #    We assume a class method `from_existing` or we can directly create a Simulator
+        #    that takes ownership of the C++ object.
+        self._sim = Simulator.from_existing(cpp_sim, config)
         
     def load_json(self, json_path: str) -> None:
         """Load a JSON scenario and prepare the simulation (does not start)."""
@@ -173,13 +201,8 @@ class SimulatorController(QObject):
         assert self._sim is not None, "No simulator loaded"
         assert self._thread is None, "Thread already started"
 
-        if self._thread and self._thread.isRunning():
-            self.stop()  
-
         self._thread = QThread()
         self._worker = _SimulationWorker(self._sim)
-
-        # Move worker to the new thread
         self._worker.moveToThread(self._thread)
 
         # Connect signals for cleanup
@@ -195,16 +218,16 @@ class SimulatorController(QObject):
         self._thread.start()
 
     def stop(self) -> None:
-        """Stop the simulation thread and wait for it to finish."""
-        if self._worker:
-            self._worker.request_pause()
-        if self._thread:
-            self._thread.quit()
-            if not self._thread.wait(3000):   # 3 second timeout
-                self._thread.terminate()       # force kill if stuck
-                self._thread.wait(1000)
-            self._thread = None
+        """Pause and clean up the background thread.  Safe to call multiple times."""
+        if self._worker is not None:
+            self._worker.request_stop()   
             self._worker = None
+            
+        if self._thread is not None:
+            if self._thread.isRunning():
+                self._thread.quit()
+                self._thread.wait(3000)
+            self._thread = None
 
     # ------------------------------------------------------------------
     # Simulation control (delegated to worker)
@@ -240,6 +263,12 @@ class SimulatorController(QObject):
         """Set the delay between steps in milliseconds (clamped)."""
         if self._worker is not None:
             self._worker.set_interval(ms)
+            
+    def set_simulator(self, sim: Simulator) -> None:
+        """Replace the current simulator (must be called when stopped)."""
+        self._sim = sim
+        self._worker = None
+        self._thread = None
 
     # ------------------------------------------------------------------
     # Internal slot handlers
@@ -251,9 +280,16 @@ class SimulatorController(QObject):
         self.state_updated.emit(nodes, links, sim_time)
 
     def _on_finished(self) -> None:
-        self.finished.emit()
         self.stop()
+        self.finished.emit()
+
 
     def _on_error(self, msg: str) -> None:
         self.error_occurred.emit(msg)
         self.stop()
+        
+    def request_stop(self) -> None:
+        """Tell the worker to exit its main loop at the next iteration."""
+        with QMutexLocker(self._mutex):
+            self._stop_requested = True
+            self._running = False # also stop stepping

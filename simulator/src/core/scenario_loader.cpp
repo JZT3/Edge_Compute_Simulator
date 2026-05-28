@@ -27,13 +27,22 @@ Scenario loadScenario(const std::string& jsonFilePath) {
     if (channelType == "SampleProcessing") {
         SampleProcessingChannel::Params chp;
         if (j.contains("channel_params")) {
-            chp.bandwidth_Hz = j["channel_params"].value("bandwidth_Hz", 10e6);
-            chp.snr_threshold_dB = j["channel_params"].value("snr_threshold_dB", 5.0);
-            chp.ber_threshold = j["channel_params"].value("ber_threshold", 1e-3);
+            chp.bandwidth_Hz      = j["channel_params"].value("bandwidth_Hz", 10e6);
+            chp.snr_threshold_dB  = j["channel_params"].value("snr_threshold_dB", 5.0);
+            chp.ber_threshold     = j["channel_params"].value("ber_threshold", 1e-3);
         }
         cfg.channel = std::make_shared<SampleProcessingChannel>(chp);
+    } else if (channelType == "BlockFading") {
+        BlockFadingChannel::Params bf;
+        if (j.contains("channel_params")) {
+            bf.availability   = j["channel_params"].value("availability", BF_LINK_AVAILABILITY);
+            bf.avg_snr_db     = j["channel_params"].value("avg_snr_db", BF_AVG_SNR_DB);
+            bf.snr_std_db     = j["channel_params"].value("snr_std_db", BF_SNR_STD_DB);
+            bf.outage_snr_db  = j["channel_params"].value("outage_snr_db", BF_OUTAGE_SNR_DB);
+            bf.bandwidth      = j["channel_params"].value("bandwidth", BF_BANDWIDTH_HZ);
+        }
+        cfg.channel = std::make_shared<BlockFadingChannel>(bf);
     } else {
-        // fallback to BlockFading (you can extend)
         throw std::runtime_error("Unsupported channel type: " + channelType);
     }
 
@@ -42,15 +51,19 @@ Scenario loadScenario(const std::string& jsonFilePath) {
             int id = std::stoi(key);
             HardwareProfile prof;
             std::string dtype = val.value("type", "RTL_SDR");
-            if (dtype == "RTL_SDR") prof.type = DeviceType::RTL_SDR;
+            if (dtype == "RTL_SDR")        prof.type = DeviceType::RTL_SDR;
             else if (dtype == "USRP_B2XX") prof.type = DeviceType::USRP_B2XX;
-            else if (dtype == "HACKRF") prof.type = DeviceType::HACKRF;
+            else if (dtype == "USRP_X3XX") prof.type = DeviceType::USRP_X3XX;   // ← NEW
+            else if (dtype == "LIME_SDR")  prof.type = DeviceType::LIME_SDR;    // ← NEW
+            else if (dtype == "HACKRF")    prof.type = DeviceType::HACKRF;
             else prof.type = DeviceType::VIRTUAL;
             prof.noise_figure_dB = val.value("noise_figure_dB", 10.0);
             prof.tx_power_dBm = val.value("tx_power_dBm", 10.0);
             prof.frequency_accuracy_ppm = val.value("frequency_accuracy_ppm", 1.0);
             prof.fft_gflops_per_sec = val.value("fft_gflops_per_sec", 1.0);
             prof.memory_mib = val.value("memory_mib", 1024.0);
+            prof.min_freq_hz = val.value("min_freq_hz", 50e6);
+            prof.max_freq_hz = val.value("max_freq_hz", 2.5e9);
             cfg.node_profiles[id] = prof;
         }
     }

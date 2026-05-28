@@ -8,9 +8,152 @@
 #include "../include/sim/logging/logger.hpp"
 #include "../include/sim/core/scenario_loader.hpp"
 #include "../include/sim/core/sim_config.hpp"
+#include "../include/sim/game_theory/hql_config.hpp"
+#include "../include/sim/game_theory/hysteretic_q_learner.hpp"
+#include "../include/sim/agents/hql_agent.hpp"
+#include "../include/sim/agents/gossip_agent.hpp"
+#include "../include/sim/agents/dtn_agent.hpp"
 
 namespace py = pybind11;
 using namespace sigint_sim;
+
+// ---------------------------------------------------------------------------
+// Internal helpers (same logic as the existing default factory)
+// ---------------------------------------------------------------------------
+namespace {
+
+    void configureTopology(Simulator::Config& cfg, py::list topology_list) {
+        for (auto item : topology_list) {
+            auto tup = item.cast<py::tuple>();
+            cfg.topology_edges.emplace_back(
+                NodeId{tup[0].cast<int>()},
+                NodeId{tup[1].cast<int>()}
+            );
+        }
+    }
+
+    void configureBlockFadingChannel(Simulator::Config& cfg,
+                                     double availability, double avg_snr_db) {
+        BlockFadingChannel::Params ch_params;
+        ch_params.availability   = availability;
+        ch_params.avg_snr_db     = avg_snr_db;
+        ch_params.snr_std_db     = 5.0;
+        ch_params.outage_snr_db  = -10.0;
+        ch_params.bandwidth      = 10e6;
+        cfg.channel = std::make_shared<BlockFadingChannel>(ch_params);
+    }
+
+    void attachDefaultEmitter(Simulator* sim, double duration) {
+        std::vector<EmitterDesc> emitters;
+        EmitterDesc e;
+        e.id             = 0;
+        e.frequency_Hz   = DEFAULT_EMITTER_FREQ_HZ;
+        e.bandwidth_Hz   = DEFAULT_EMITTER_BW_HZ;
+        e.priority       = DEFAULT_EMITTER_PRIORITY;
+        e.active_start_s = DEFAULT_EMITTER_START_S;
+        e.active_end_s   = duration;
+        emitters.push_back(e);
+        sim->setEmitters(emitters);
+    }
+
+    int countNodes(const std::vector<std::pair<NodeId, NodeId>>& edges) {
+        int max_id = -1;
+        for (const auto& edge : edges) {
+            max_id = std::max(max_id, std::max(static_cast<int>(edge.first),
+                                                static_cast<int>(edge.second)));
+        }
+        return max_id + 1;
+    }
+
+} // anonymous namespace
+
+
+// ---------------------------------------------------------------------------
+// Factory: create_hql_simulator (HQL agents, block‑fading)
+// ---------------------------------------------------------------------------
+std::unique_ptr<Simulator> create_hql_simulator(
+    py::dict hql_cfg_dict, uint64_t seed, double duration,
+    py::list topology_list, double availability, double avg_snr_db)
+{
+    Simulator::Config cfg;
+    cfg.seed     = seed;
+    cfg.timestep = 0.1;
+    cfg.duration = duration;
+    configureTopology(cfg, topology_list);
+    configureBlockFadingChannel(cfg, availability, avg_snr_db);
+
+    // Extract HQL hyperparameters
+    using HQLConfig = game_theory::HystereticQLearner::Config;
+    HQLConfig hql_cfg;
+    hql_cfg.alpha   = hql_cfg_dict["alpha"].cast<double>();
+    hql_cfg.beta    = hql_cfg_dict["beta"].cast<double>();
+    hql_cfg.gamma   = hql_cfg_dict["gamma"].cast<double>();
+    hql_cfg.lambda  = hql_cfg_dict["lambda"].cast<double>();
+    hql_cfg.epsilon_start       = hql_cfg_dict["epsilon_start"].cast<double>();
+    hql_cfg.epsilon_end         = hql_cfg_dict["epsilon_end"].cast<double>();
+    hql_cfg.epsilon_decay_steps = hql_cfg_dict["epsilon_decay_steps"].cast<int>();
+    if (hql_cfg_dict.contains("mu"))
+        hql_cfg.mu = hql_cfg_dict["mu"].cast<double>();
+    if (hql_cfg_dict.contains("trace_length"))
+        hql_cfg.trace_length = hql_cfg_dict["trace_length"].cast<int>();
+
+    auto sim = std::make_unique<Simulator>(cfg);
+
+    int node_count = countNodes(cfg.topology_edges);
+    for (int i = 0; i < node_count; ++i) {
+        auto agent = std::make_unique<HQLAgent>(hql_cfg, seed + i * 1000);
+        sim->setAgent(NodeId{i}, std::move(agent));
+    }
+
+    attachDefaultEmitter(sim.get(), duration);
+    return sim;
+}
+// ---------------------------------------------------------------------------
+// Factory: create_gossip_simulator (gossip agents, block‑fading)
+// ---------------------------------------------------------------------------
+std::unique_ptr<Simulator> create_gossip_simulator(
+    uint64_t seed, double duration, py::list topology_list,
+    double availability, double avg_snr_db)
+{
+    Simulator::Config cfg;
+    cfg.seed = seed;
+    cfg.timestep = 0.1;
+    cfg.duration = duration;
+    configureTopology(cfg, topology_list);
+    configureBlockFadingChannel(cfg, availability, avg_snr_db);
+
+    auto sim = std::make_unique<Simulator>(cfg);
+    int node_count = countNodes(cfg.topology_edges);
+    for (int i = 0; i < node_count; ++i) {
+        sim->setAgent(NodeId{i},
+            std::make_unique<GossipAgent>(seed + i * 1000));
+    }
+    attachDefaultEmitter(sim.get(), duration);
+    return sim;
+}
+// ---------------------------------------------------------------------------
+// Factory: create_dtn_simulator (dtn agents, block‑fading)
+// ---------------------------------------------------------------------------
+std::unique_ptr<Simulator> create_dtn_simulator(
+    uint64_t seed, double duration, py::list topology_list,
+    double availability, double avg_snr_db)
+{
+    Simulator::Config cfg;
+    cfg.seed = seed;
+    cfg.timestep = 0.1;
+    cfg.duration = duration;
+    configureTopology(cfg, topology_list);
+    configureBlockFadingChannel(cfg, availability, avg_snr_db);
+
+    auto sim = std::make_unique<Simulator>(cfg);
+    int node_count = countNodes(cfg.topology_edges);
+    for (int i = 0; i < node_count; ++i) {
+        sim->setAgent(NodeId{i},
+            std::make_unique<DTNAgent>(seed + i * 1000));
+    }
+    attachDefaultEmitter(sim.get(), duration);
+    return sim;
+}
 
 // ---- Trampoline for IAgent -----------------------------------------------
 class PyIAgent : public IAgent {
@@ -20,8 +163,8 @@ public:
 
     // Trampoline for pure virtual method
     Action selectAction(const NodeState& my_state,
-                        const std::vector<NodeState>& all_states,
-                        const std::vector<LinkState>& links,
+                        std::span<const NodeState> all_states,
+                        std::span<const LinkState> links,
                         const EventLog& recent_events) override {
         PYBIND11_OVERRIDE_PURE(
             Action,          // Return type
@@ -114,6 +257,46 @@ PYBIND11_MODULE(_sigint_sim_core, m) {
         "Create a Simulator with two nodes and RandomAgents."
     );
 
+    // ---------- new HQL factory -----------------------------------------------
+    m.def(
+    "create_hql_simulator",
+    [](py::dict hql_cfg_dict, uint64_t seed, double duration,
+       py::list topology_list, double availability, double avg_snr_db) {
+        // Apply tuned defaults if no config given
+        if (hql_cfg_dict.empty()) {
+            hql_cfg_dict["alpha"] = 0.0413;
+            hql_cfg_dict["beta"]  = 0.0040;
+            hql_cfg_dict["gamma"] = 0.8864;
+            hql_cfg_dict["lambda"] = 0.8116;
+            hql_cfg_dict["epsilon_start"] = 0.998;
+            hql_cfg_dict["epsilon_end"]   = 0.02;
+            hql_cfg_dict["epsilon_decay_steps"] = 19600;
+            hql_cfg_dict["mu"] = 1.8;
+            hql_cfg_dict["trace_length"] = 491;
+        }
+        // Delegate to existing function
+        return create_hql_simulator(hql_cfg_dict, seed, duration,
+                                    topology_list, availability, avg_snr_db);
+    },
+    py::arg("hql_config") = py::dict(),
+    py::arg("seed"),
+    py::arg("duration"),
+    py::arg("topology"),
+    py::arg("availability") = 0.9,
+    py::arg("avg_snr_db") = 20.0,
+    "Create a Simulator with HystereticQLearner agents.");
+
+    // Gossip & DTN factories – simple delegations
+m.def("create_gossip_simulator", &create_gossip_simulator,
+    py::arg("seed"), py::arg("duration"), py::arg("topology"),
+    py::arg("availability") = 0.9, py::arg("avg_snr_db") = 20.0,
+    "Create a Simulator with Gossip agents.");
+
+m.def("create_dtn_simulator", &create_dtn_simulator,
+    py::arg("seed"), py::arg("duration"), py::arg("topology"),
+    py::arg("availability") = 0.9, py::arg("avg_snr_db") = 20.0,
+    "Create a Simulator with DTN agents.");
+
     // ---- scenario loader ----
     m.def("load_scenario",
         [](const std::string& json_path) -> std::unique_ptr<Simulator> {
@@ -136,7 +319,53 @@ PYBIND11_MODULE(_sigint_sim_core, m) {
         },
         py::arg("json_path"),
         "Load a scenario JSON file and return a configured Simulator.");
-    
+
+    m.def("create_hql_simulator", &create_hql_simulator,
+        py::arg("hql_config"), py::arg("seed"), py::arg("duration"),
+        py::arg("topology"), py::arg("availability") = 0.9,
+        py::arg("avg_snr_db") = 20.0);
+
+    m.def("create_gossip_simulator", &create_gossip_simulator,
+        py::arg("seed"), py::arg("duration"),
+        py::arg("topology"), py::arg("availability") = 0.9,
+        py::arg("avg_snr_db") = 20.0);
+
+    m.def("create_dtn_simulator", &create_dtn_simulator,
+        py::arg("seed"), py::arg("duration"),
+        py::arg("topology"), py::arg("availability") = 0.9,
+        py::arg("avg_snr_db") = 20.0);
+
+    m.def("load_scenario_with_agent",
+        [](const std::string& json_path, const std::string& agent_type) -> std::unique_ptr<Simulator> {
+            Scenario sc = sigint_sim::loadScenario(json_path);
+            auto sim = std::make_unique<Simulator>(sc.config);
+            sim->setEmitters(sc.emitters);
+
+            int node_count = 0;
+            for (const auto& edge : sc.config.topology_edges) {
+                node_count = std::max(node_count,
+                    std::max(static_cast<int>(edge.first),
+                            static_cast<int>(edge.second)));
+            }
+            node_count += 1;
+            for (int i = 0; i < node_count; ++i) {
+                uint64_t seed_i = sc.config.seed + i * 1000;
+                if (agent_type == "HQL") {
+                    sigint_sim::game_theory::HystereticQLearner::Config hql_cfg; // uses tuned defaults
+                    sim->setAgent(NodeId{i}, std::make_unique<HQLAgent>(hql_cfg, seed_i));
+                } else if (agent_type == "Gossip") {
+                    sim->setAgent(NodeId{i}, std::make_unique<GossipAgent>(seed_i));
+                } else if (agent_type == "DTN") {
+                    sim->setAgent(NodeId{i}, std::make_unique<DTNAgent>(seed_i));
+                } else { // Random
+                    sim->setAgent(NodeId{i}, std::make_unique<RandomAgent>(seed_i));
+                }
+            }
+            return sim;
+        },
+        py::arg("json_path"), py::arg("agent_type") = "Random",
+        "Load a scenario JSON and attach the specified agent type.");
+
     // ---- Trampoline Class Actions ----
     py::class_<Action::Burst>(m, "Burst")
     .def(py::init<>())
@@ -172,7 +401,15 @@ PYBIND11_MODULE(_sigint_sim_core, m) {
         .def_readonly("name", &NodeState::name)
         .def_property_readonly("mode", [](const NodeState& s) { return static_cast<int>(s.mode); })
         .def_readonly("buffer_size", &NodeState::buffer_size)
-        .def_readonly("energy_used", &NodeState::energy_used);
+        .def_readonly("energy_used", &NodeState::energy_used)
+        .def_readonly("device_type", &NodeState::device_type)
+        .def_readonly("noise_figure_dB", &NodeState::noise_figure_dB)
+        .def_readonly("tx_power_dBm", &NodeState::tx_power_dBm)
+        .def_readonly("frequency_accuracy_ppm", &NodeState::frequency_accuracy_ppm)
+        .def_readonly("x", &NodeState::x)
+        .def_readonly("y", &NodeState::y)
+        .def_readonly("min_freq_hz", &NodeState::min_freq_hz)
+        .def_readonly("max_freq_hz", &NodeState::max_freq_hz) ;
 
     py::class_<LinkState>(m, "LinkState")
         .def_property_readonly("id", [](const LinkState& l) { return static_cast<int>(l.id); })
@@ -193,6 +430,10 @@ PYBIND11_MODULE(_sigint_sim_core, m) {
         .def("step", &Simulator::step,
              py::call_guard<py::gil_scoped_release>(),
              "Advance the simulation by one time step.")
+        
+        .def("run_for_steps", &Simulator::runForSteps, py::arg("steps"))
+        
+        .def("get_delivery_count", &Simulator::getDeliveryCount)
 
         .def("reset", &Simulator::reset,
              py::arg("seed"),
@@ -222,6 +463,8 @@ PYBIND11_MODULE(_sigint_sim_core, m) {
             d["transmissions_succeeded"] = m.transmissions_succeeded;
             d["average_snr"] = m.average_snr;
             d["step_execution_time_us"] = m.step_execution_time_us;
+            d["raw_intelligence"] = m.raw_intelligence;
+            d["lpd_penalty_total"] = m.lpd_penalty_total;
             return d;
         })
         .def("get_metrics_history", [](const Simulator& sim) {

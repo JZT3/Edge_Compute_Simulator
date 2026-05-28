@@ -1,0 +1,26 @@
+leanprover/lean4:v4.15.0
+leanprover--lean4---v4.30.0-rc
+
+<!-- 
+`/Users/jzt/.elan/toolchains/leanprover--lean4---v4.30.0-rc2/bin/lake setup-file /Users/jzt/Desktop/RF_Practice/Edge_Compute_Simulator/simulator/math_proof/LPDSigint.lean - --no-build --no-cache` failed:
+
+stderr:
+error: /Users/jzt/Desktop/RF_Practice/Edge_Compute_Simulator/simulator/math_proof/.lake/packages/proofwidgets/lakefile.lean:28:63: Function expected at
+  BuildJob
+but this term has type
+  ?m.1
+
+Note: Expected a function because this term is being applied to the argument
+  (Array FilePath)
+
+Hint: The identifier `BuildJob` is unknown, and Lean's `autoImplicit` option causes an unknown identifier to be treated as an implicitly bound variable with an unknown type. However, the unknown type cannot be a function, and a function is what Lean expects here. This is often the result of a typo or a missing `import` or `open` statement.
+error: /Users/jzt/Desktop/RF_Practice/Edge_Compute_Simulator/simulator/math_proof/.lake/packages/proofwidgets/lakefile.lean:40:13: Invalid field notation: Field projection operates on types of the form `C ...` where C is a constant. The expression
+  BuildJob
+has type `x✝` which does not have the necessary form.
+error: /Users/jzt/Desktop/RF_Practice/Edge_Compute_Simulator/simulator/math_proof/.lake/packages/proofwidgets/lakefile.lean:46:29: Invalid field notation: Type of
+  deps
+is not known; cannot resolve field `bindSync`
+warning: /Users/jzt/Desktop/RF_Practice/Edge_Compute_Simulator/simulator/math_proof/.lake/packages/proofwidgets/lakefile.lean:77:7: declaration uses `sorry`
+warning: /Users/jzt/Desktop/RF_Practice/Edge_Compute_Simulator/simulator/math_proof/.lake/packages/proofwidgets/lakefile.lean:80:7: declaration uses `sorry`
+error: /Users/jzt/Desktop/RF_Practice/Edge_Compute_Simulator/simulator/math_proof/.lake/packages/proofwidgets/lakefile.lean: package configuration has errors
+Failed to load the Lake workspace. -->

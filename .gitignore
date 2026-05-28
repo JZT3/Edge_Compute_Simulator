@@ -274,3 +274,8 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+#ignore lean dependencies
+.lake
+.lake/
+lake-manifest.json

@@ -15,6 +15,8 @@ struct HardwareProfile {
     // Compute capabilities
     double fft_gflops_per_sec = DEFAULT_FFT_GFLOPS_PER_SEC;   // GFLOPS available for detection
     double memory_mib         = DEFAULT_MEMORY_MIB;
+    double min_freq_hz        = DEFAULT_MIN_FREQ_HZ;    
+    double max_freq_hz        = DEFAULT_MAX_FREQ_HZ;
 
     // Convert the enum to a human-readable string.
     [[nodiscard]] std::string deviceTypeToString() const {

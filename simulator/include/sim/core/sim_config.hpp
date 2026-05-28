@@ -106,11 +106,13 @@ inline constexpr double SP_DETECTION_THRESHOLD_FACTOR = 1.0;
 // ============================================================================
 // 8.  Hardware profile defaults
 // ============================================================================
-inline constexpr double DEFAULT_NOISE_FIGURE_DB    = 10.0;   // dB
+inline constexpr double DEFAULT_NOISE_FIGURE_DB     = 10.0;   // dB
 inline constexpr double DEFAULT_TX_POWER_DBM        = 10.0;   // dBm
 inline constexpr double DEFAULT_FREQ_ACCURACY_PPM   = 1.0;    // ppm
 inline constexpr double DEFAULT_FFT_GFLOPS_PER_SEC  = 1.0;    // GFLOPS
 inline constexpr double DEFAULT_MEMORY_MIB          = 1024.0; // MiB
+inline constexpr double DEFAULT_MIN_FREQ_HZ         = 50e6;    // e.g., 50 MHz
+inline constexpr double DEFAULT_MAX_FREQ_HZ         = 2.5e9; // e.g., 2.6 GHz
 
 // ============================================================================
 // 9.  Block‑fading channel (kept for backward compatibility / quick tests)

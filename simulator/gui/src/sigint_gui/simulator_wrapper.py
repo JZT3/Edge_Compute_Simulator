@@ -149,8 +149,10 @@ class Simulator:
         Returns:
             New events generated during these steps.
         """
-        assert steps > 0, f"steps must be positive, got {steps}"
         assert self._native is not None, "Simulator has been closed"
+        
+        if steps <= 0:
+            raise ValueError("steps must be positive")
 
         new_events: List[Event] = []
         for _ in range(steps):
@@ -170,9 +172,10 @@ class Simulator:
             seed: New random seed for deterministic replay.
         """
         assert self._native is not None, "Simulator has been closed"
-        assert isinstance(seed, int) and seed >= 0, (
-            f"Seed must be a non‑negative integer, got {seed}"
-        )
+        
+        if steps <= 0:
+            raise ValueError("steps must be positive")
+        
         self._native.reset(seed)
         self._event_log.clear()
         logger.info("Simulator reset with seed %d", seed)
@@ -237,25 +240,6 @@ class Simulator:
         assert self._native is not None
         return self._native.get_metrics_history()
     
-    @classmethod
-    def from_scenario(cls, json_path: str, attach_random_agents: bool = True) -> "Simulator":
-        """Create a Simulator from a JSON scenario file."""
-        from sigint_gui import _sigint_sim_core as _core
-        native_sim = _core.load_scenario(json_path)
-        # native_sim is a Simulator object
-        wrapper = cls.__new__(cls)
-        wrapper._native = native_sim
-        wrapper._event_log = []
-        wrapper._config = None  # not needed
-        wrapper._metrics_history = []  # we'll populate ourselves
-        if attach_random_agents:
-            # Determine number of nodes from topology (we need node count)
-            # We can get it from the native simulator: get_node_states()
-            n_nodes = len(wrapper.get_node_states())
-            for i in range(n_nodes):
-                agent = _core.RandomAgent(12345 + i * 1000)  # need to expose RandomAgent in bindings
-                native_sim.setAgent(NodeId(i), agent)
-        return wrapper
     
     def _attach_default_agents(self) -> None:
         """Attach a RandomAgent to every node, using the simulation seed."""
@@ -279,3 +263,12 @@ class Simulator:
         # Provide a lightweight config for GUI reference (seed isn’t needed for agents)
         wrapper._config = SimulatorConfig(seed=42)   # dummy, not used by agents
         return wrapper
+    
+    @classmethod
+    def from_existing(cls, native_sim, config: SimulatorConfig) -> "Simulator":
+        """Create a Simulator that wraps an already‑constructed C++ object."""
+        sim = object.__new__(cls)
+        sim._config = config
+        sim._native = native_sim
+        sim._event_log = []
+        return sim

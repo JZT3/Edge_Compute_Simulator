@@ -58,15 +58,24 @@ set(CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/channel_model.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/simulator.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/agents/random_agent.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/agents/hql_agent.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/logging/logger.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/virtual_radio.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/signal_processor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/sample_processing_channel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/radio_interface.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/scenario_loader.cpp 
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/agents/gossip_agent.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/agents/dtn_agent.cpp
+)
+
+set(GAME_THEORY_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game_theory/feature_vector.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game_theory/hysteretic_q_learner.cpp
 )
 
 add_library(sigint_sim_core STATIC ${CORE_SOURCES})
+target_sources(sigint_sim_core PRIVATE ${GAME_THEORY_SOURCES})
+
 
 target_include_directories(sigint_sim_core
     PUBLIC
@@ -123,6 +132,13 @@ add_executable(fidelity_tests
 )
 target_link_libraries(fidelity_tests PRIVATE sigint_sim_core GTest::gtest_main)
 add_test(NAME FidelityTests COMMAND fidelity_tests)
+
+# ---- Game Theory Integration Tests ----------------------------------------
+add_executable(test_learner_mdp
+    tests/game_theory/integration/test_learner_in_small_mdp.cpp
+)
+target_link_libraries(test_learner_mdp PRIVATE sigint_sim_core GTest::gtest_main)
+add_test(NAME LearnerMDP COMMAND test_learner_mdp)
 
 # =============================================================================
 # Custom Target: Run All Tests
