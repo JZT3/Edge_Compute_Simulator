@@ -77,6 +77,8 @@ struct NodeState {
     double tx_power_dBm = 0.0;
     double frequency_accuracy_ppm = 0.0;
     double fft_gflops_per_sec = 0.0;
+    double min_freq_hz = 50e6;
+    double max_freq_hz = 2.5e9;
     // ---------------------------------
 
 };
