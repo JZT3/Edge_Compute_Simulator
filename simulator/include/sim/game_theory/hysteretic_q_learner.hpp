@@ -9,8 +9,52 @@
 #include <random>
 #include <unordered_map>
 #include <vector>
+#include <span>
 
 namespace sigint_sim::game_theory {
+/*
+ * Distributed cooperative Q‑learner with hysteretic learning rates.
+ *
+ * This agent implements **hysteretic Q‑learning** (Matignon et al., 2007),
+ * designed for cooperative multi‑agent systems where the environment appears
+ * non‑stationary from any single agent’s perspective.  The core idea:
+ *   - **alpha** (larger) is used when the temporal‑difference (TD) error is
+ *     positive — the agent “optimistically” reinforces actions that led to
+ *     better‑than‑expected outcomes.
+ *   - **beta** (smaller, typically α/5 … α/10) is used for negative TD errors —
+ *     the agent is slow to penalise actions that may have failed because of
+ *     another agent’s exploration rather than the action itself.
+ * This simple asymmetry has been shown to improve convergence to optimal joint
+ * policies in potential games and, empirically, in many partially observable
+ * stochastic games.
+ *
+ * Architecture & Learning
+ *   - Linear function approximation with a fixed 813‑dimensional feature vector
+ *     (bias, buffer×TX, battery×TX, neighbour reliability, frequency‑power pairs).
+ *   - ε‑greedy action selection; the argmax is computed lazily (no allocation).
+ *   - Replacing eligibility traces (Q(λ)) with trace‑decay parameter λ.
+ *   - Delayed rewards are handled via a replay buffer of recent transitions,
+ *     indexed by packet ID (absolute indices, safe across deque insertions).
+ *   - Global credit assignment: the originator of a packet receives the full
+ *     reward when the packet reaches the sink (processSinkSummary); forwarding
+ *     nodes receive a local proxy reward (processLocalAck, scaled by γ_loc).
+ *
+ * SARSA Fallback (Divergence Recovery)
+ *   If any weight’s absolute value exceeds `max_weight`, the learner
+ *   permanently switches to **SARSA(λ)** (on‑policy).  This eliminates the
+ *   max‑operator that can cause off‑policy divergence in linear TD and ensures
+ *   that the weights remain bounded.  The fallback is a safety measure; in
+ *   normal operation the hysteretic update keeps weights stable.
+ *
+ * Thread Safety & Determinism
+ *   All mutable state is private; every method that modifies weights is called
+ *   from a single thread.  The internal RNG is seeded at construction and
+ *   preserved across resets, guaranteeing reproducible experiments.
+ *
+ *The learner is completely independent of the simulation engine; it only
+ *       sees Observation snapshots and returns Action values.  This allows
+ *      unit‑testing it with deterministic reward sequences.
+ */
 
 class HystereticQLearner {
 public:
@@ -34,10 +78,9 @@ public:
     // valid_neighbors : list of neighbor indices that can be chosen.
     // num_freq_bins   : typically 200
     // num_power_levels: typically 4
-    Action chooseAction(const Observation& obs,
-                        const std::vector<int>& valid_neighbors,
-                        int num_freq_bins,
-                        int num_power_levels);
+    [[nodiscard]] Action chooseAction(const Observation& obs,
+                         std::span<const int> valid_neighbors,
+                         int num_freq_bins, int num_power_levels);
 
     // ----- Transition storage -----
     // Call after action is executed, before the next step, to record the transition.
@@ -60,14 +103,14 @@ public:
     void processLocalAck(std::uint32_t packet_id, double packet_weight, int current_time);
 
     // Sink summary: delivered packet IDs with their original weight.
-    void processSinkSummary(const std::vector<std::pair<std::uint32_t, double>>& delivered,
+    void processSinkSummary(std::span<const std::pair<std::uint32_t, double>> delivered,
                             int current_time);
 
     // ----- Parameter control -----
     void setMu(double new_mu);
     double getMu() const { return mu_; }
     void setGammaLoc(double gamma_loc) { gamma_loc_ = gamma_loc; }
-    double maxAbsoluteWeight() const;
+    [[nodiscard]] double maxAbsoluteWeight() const;
 
     // ----- Testing / introspection -----
     double getQValue(const Observation& obs, const Action& action) const;
@@ -75,11 +118,13 @@ public:
 
 private:
     // Compute Q(s,a) = dot(theta, phi(s,a))
-    double computeQ(const Observation& obs, const Action& action) const;
+    [[nodiscard]] double computeQ(const Observation& obs, const Action& action) const;
     
-    // Build list of valid actions (including silent)
-    std::vector<Action> buildActionList(const std::vector<int>& valid_neighbors,
-                                        int num_freq_bins, int num_power_levels) const;
+    // Return (best_action, best_q) without any allocations.
+    [[nodiscard]] std::pair<Action, double> greedyAction(
+        const Observation& obs,
+        const std::span<const int>& neighbors,
+        int num_freq, int num_power) const;
 
     // TD update from a transition entry using either max (Q-learning) or SARSA target
     void applyTDUpdate(const Transition& trans, double reward, bool use_max);
@@ -97,8 +142,9 @@ private:
 
     std::deque<Transition> replay_buffer_;
 
-    // maps packet_id -> iterator into replay_buffer_
-    std::unordered_map<std::uint32_t, std::deque<Transition>::iterator> packet_to_trans_;
+    // maps packet_id -> absolute index (never changes after assignment)
+    std::unordered_map<std::uint32_t, std::size_t> packet_to_index_;
+    std::size_t evicted_count_ = 0;   // number of transitions that have been popped from the front
 
     int step_counter_ = 0;     // used for epsilon decay
     std::mt19937 rng_;
