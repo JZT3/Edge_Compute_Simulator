@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 
 class NodeMode(IntEnum):
@@ -29,6 +29,8 @@ class NodeState:
     fft_gflops_per_sec: float = 0.0
     x: float = 0.0
     y: float = 0.0
+    min_freq_hz: float = 50e6
+    max_freq_hz: float = 2.5e9
     current_rf: Optional[RFParams] = None   # we’ll add RFParams later if needed
 
 
