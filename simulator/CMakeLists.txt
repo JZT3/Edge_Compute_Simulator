@@ -63,8 +63,9 @@ set(CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/virtual_radio.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/signal_processor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/sample_processing_channel.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/radio_interface.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/scenario_loader.cpp 
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/agents/gossip_agent.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/agents/dtn_agent.cpp
 )
 
 set(GAME_THEORY_SOURCES
