@@ -100,35 +100,37 @@ void SampleProcessingChannel::processLink(LinkBuffer& buf, LinkState& state,
 
     // 3. Apply path loss and AWGN
     std::normal_distribution<double> noise_dist(0.0, std::sqrt(noise_W));
+
+    double signal_power_W = 0.0;
+    double noise_power_W  = 0.0;
+
     buf.rx_samples.resize(buf.tx_samples.size());
-    double signal_power = 0.0;
     for (size_t i = 0; i < buf.tx_samples.size(); ++i) {
-        std::complex<double> s(buf.tx_samples[i].real(), buf.tx_samples[i].imag());
-        s *= path_loss;
-        s += std::complex<double>(noise_dist(rng), noise_dist(rng));
-        buf.rx_samples[i] = static_cast<std::complex<float>>(s);
-        signal_power += std::norm(s);
-    }
-    signal_power /= buf.tx_samples.size();
+        // Clean signal after path loss
+        std::complex<double> signal(
+            buf.tx_samples[i].real() * path_loss,
+            buf.tx_samples[i].imag() * path_loss);
+        // Noise
+        std::complex<double> noise(noise_dist(rng), noise_dist(rng));
+        // Received sample
+        buf.rx_samples[i] = static_cast<std::complex<float>>(signal + noise);
 
-    // 4. Apply frequency offset (rotation per sample)
-    if (std::abs(buf.freq_offset_hz) > 1e-9) {
-        phy_math::apply_freq_offset(buf.rx_samples, buf.freq_offset_hz, buf.tx_rate);
+        signal_power_W += std::norm(signal);
+        noise_power_W  += std::norm(noise);
     }
+    signal_power_W /= buf.tx_samples.size();
+    noise_power_W  /= buf.tx_samples.size();
 
-    // 5. Sample‑rate conversion (nearest‑neighbour)
-    if (std::abs(buf.rx_rate - buf.tx_rate) > 1e-6) {
-        buf.rx_samples = phy_math::resample_nearest(buf.rx_samples, buf.tx_rate, buf.rx_rate);
-    }
-
-    // 6. Metric computations using phy_math
-    double snr_linear = signal_power / noise_W;
+    // 6. Metric computations (unchanged, but now use the clean separation)
+    double snr_linear = signal_power_W / std::max(noise_power_W, 1e-30);
     state.snr = 10.0 * std::log10(snr_linear);
 
     double ber = phy_math::ber_qpsk(snr_linear);
-    state.active = (ber < params_.ber_threshold) && (state.snr > params_.snr_threshold_dB);
-
-    state.capacity_bps = state.active ? phy_math::shannon_capacity_bps(buf.rx_rate, snr_linear) : 0.0;
+    state.active = (ber < params_.ber_threshold) &&
+                (state.snr > params_.snr_threshold_dB);
+    state.capacity_bps = state.active
+        ? phy_math::shannon_capacity_bps(buf.rx_rate, snr_linear)
+        : 0.0;
     state.outage_prob = phy_math::outage_probability(snr_linear);
 
     // Clear TX buffer – processed
