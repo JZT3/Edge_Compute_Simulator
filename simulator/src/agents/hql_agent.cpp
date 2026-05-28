@@ -12,14 +12,17 @@ HQLAgent::HQLAgent(LearnerConfig config, std::uint64_t seed)
 // Observation
 // ---------------------------------------------------------------------------
 game_theory::Observation HQLAgent::buildObservation(
-    const NodeState& my_state, const std::vector<LinkState>& links) const
+    const NodeState& my_state, std::span<const LinkState> links) const
 {
-    game_theory::Observation obs;
-    obs.buffer_level = std::min(3, my_state.buffer_size);
-    obs.battery_level = 2;   // placeholder until energy model is added
-    obs.neighbor_bits = 0;
+    game_theory::Observation obs{
+        .buffer_level = std::min(3, my_state.buffer_size),
+        .battery_level = 2,   // placeholder until energy model is added
+        .neighbor_bits = 0
+    };
     for (size_t i = 0; i < links.size() && i < 4; ++i) {
-        if (links[i].active) obs.neighbor_bits |= (1u << i);
+        if (links[i].active) {
+            obs.neighbor_bits |= (1u << i); 
+        }
     }
     return obs;
 }
@@ -28,9 +31,9 @@ game_theory::Observation HQLAgent::buildObservation(
 // Action selection
 // ---------------------------------------------------------------------------
 Action HQLAgent::selectAction(const NodeState& my_state,
-                              const std::vector<NodeState>& /*all_states*/,
-                              const std::vector<LinkState>& links,
-                              const EventLog& /*recent_events*/)
+                    std::span<const NodeState> /*all_states*/,
+                    std::span<const LinkState> links,
+                              const EventLog&)
 {
     // 1. Build observation from current state
     auto obs = buildObservation(my_state, links);
@@ -40,7 +43,7 @@ Action HQLAgent::selectAction(const NodeState& my_state,
     //    in the *previous* step – that linkage is handled inside the learner).
     learner_.observeNewState(obs, step_counter_);
 
-    // 3. Determine valid neighbours (outgoing active links)
+    // 3. Determine valid neighbors (outgoing active links)
     last_valid_neighbor_ids_.clear();
     std::vector<int> neighbor_indices;      // indices 0..K-1 for the learner
     for (const auto& link : links) {
@@ -50,8 +53,10 @@ Action HQLAgent::selectAction(const NodeState& my_state,
                 last_valid_neighbor_ids_.push_back(static_cast<int>(link.to)); 
             }
     }
-
-    // 4. If no neighbours, force silent action
+    // Store the current node's frequency range for later use
+    double freq_base = my_state.min_freq_hz;
+    double freq_step = (my_state.max_freq_hz - my_state.min_freq_hz) / 200.0;
+    // 4. If no neighbors, force silent action
     if (neighbor_indices.empty()) {
         game_theory::Action silent_learner{};
         learner_.addTransition(obs, silent_learner, {}, step_counter_);
@@ -71,13 +76,14 @@ Action HQLAgent::selectAction(const NodeState& my_state,
     ++step_counter_;
 
     // 7. Convert to simulator action
-    return fromLearnerAction(learner_action);
+    return fromLearnerAction(learner_action, freq_base, freq_step);
 }
 
 // ---------------------------------------------------------------------------
 // Action conversion
 // ---------------------------------------------------------------------------
-Action HQLAgent::fromLearnerAction(const game_theory::Action& learner_action) const {
+Action HQLAgent::fromLearnerAction(const game_theory::Action& learner_action,
+                                   double freq_base, double freq_step) const {
     Action sim_action{};
     if (learner_action.is_silent) {
         return sim_action;
@@ -99,7 +105,8 @@ Action HQLAgent::fromLearnerAction(const game_theory::Action& learner_action) co
     // Frequency bin → centre frequency
     sim_action.scan_params = RFParams{};
     sim_action.scan_params->center_freq =
-        2.4e9 + learner_action.freq_bin * 100e3;
+    sim_action.scan_params->center_freq =
+        freq_base + learner_action.freq_bin * freq_step;
     sim_action.scan_params->bandwidth = 10e6;
     sim_action.scan_params->gain = 40.0;
 
