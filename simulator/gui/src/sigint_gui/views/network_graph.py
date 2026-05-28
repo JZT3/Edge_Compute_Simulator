@@ -18,6 +18,8 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QVBoxLayout,
     QWidget,
+    QGraphicsEllipseItem, 
+    QGraphicsPolygonItem,
 )
 
 from ..models import LinkState, NodeMode, NodeState
@@ -26,8 +28,8 @@ from ..utils.layout import compute_layout
 # ---------------------------------------------------------------------------
 # Visual constants
 # ---------------------------------------------------------------------------
-NODE_RADIUS: float = 100.0
-ARROW_SIZE: float = 50.0
+NODE_RADIUS: float = 15.0
+ARROW_SIZE: float = 12.0
 EDGE_WIDTH_ACTIVE: float = 2.5
 EDGE_WIDTH_INACTIVE: float = 1.0
 LABEL_FONT = QFont("Arial", 9, QFont.Bold)
@@ -215,6 +217,7 @@ class NetworkGraphView(QWidget):
         self._scene.setBackgroundBrush(QBrush(BACKGROUND_COLOR))
 
         self._view = _ZoomableView(self._scene, self)
+        self._emitters: List[dict] = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -251,7 +254,11 @@ class NetworkGraphView(QWidget):
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+    def set_emitters(self, emitters: List[dict]) -> None:
+        """Set emitter data (list of dicts with 'x','y','id','name','frequency_Hz')."""
+        self._emitters = emitters
 
+        
     def _rebuild_scene(
         self,
         nodes: List[NodeState],
@@ -272,18 +279,28 @@ class NetworkGraphView(QWidget):
         if not nodes:
             return
 
+        # Use the simulator’s actual coordinates for every node
+        pos: Dict[int, QPointF] = {}
+        for ns in nodes:
+            # Scale down if necessary (the raw coordinates are in metres,
+            # Here we divide by 1 to keep metres as scene units.
+            pos[ns.id] = QPointF(ns.x, ns.y)
+
+        # Store those positions so drags persist
+        self._node_positions = pos
+
         # 2. Run layout only for nodes without a known position
         node_ids = [ns.id for ns in nodes]
         edge_pairs = [(ls.from_id, ls.to_id) for ls in links]
         unknown = [nid for nid in node_ids if nid not in self._node_positions]
-        if unknown:
+        if unknown:                     # only compute if there are new nodes
             computed = compute_layout(
-                node_ids=node_ids,
-                edges=edge_pairs,
-                seed=42,
-                width=800,
-                height=600,
-            )
+            node_ids=node_ids,
+            edges=edge_pairs,
+            seed=42,
+            width=800,
+            height=600,
+        )
             for nid, (x, y) in computed.items():
                 if nid not in self._node_positions:
                     self._node_positions[nid] = QPointF(x, y)
@@ -318,8 +335,28 @@ class NetworkGraphView(QWidget):
                 f"Buffer: {ns.buffer_size} B, Energy: {ns.energy_used:.3e} J"
             )
             self._scene.addItem(NodeItem(ns.id, pos[ns.id], color, tooltip))
+            
+        # 5. Draw emitter triangles
+        for emitter in self._emitters:
+            x = emitter.get("x", 0.0)
+            y = emitter.get("y", 0.0)
+            pos = QPointF(x, y)
+            # Create a triangle item (custom QGraphicsPolygonItem)
+            triangle = QPolygonF([
+                pos + QPointF(0, -12),
+                pos + QPointF(-10, 8),
+                pos + QPointF(10, 8)
+            ])
+            item = QGraphicsPolygonItem(triangle)
+            item.setBrush(QBrush(QColor("orange")))
+            item.setPen(QPen(Qt.black, 1))
+            # Tooltip
+            freq_mhz = emitter.get("frequency_Hz", 0) / 1e6
+            name = emitter.get("name", "?")
+            item.setToolTip(f"Emitter {emitter.get('id','?')}: {name}\n{freq_mhz:.1f} MHz")
+            self._scene.addItem(item)
 
-        # 5. Fit view only when the topology changes — not on every colour update
+        # 6. Fit view only when the topology changes — not on every colour update
         current_ids = frozenset(node_ids)
         if current_ids != self._prev_node_ids:
             self._prev_node_ids = current_ids
@@ -329,3 +366,18 @@ class NetworkGraphView(QWidget):
                 ),
                 Qt.KeepAspectRatio,
             )
+
+    def clear(self):
+        self._scene.clear()
+        self._node_positions.clear()
+        self._prev_node_ids = frozenset()
+        
+
+    def reset_view(self) -> None:
+        """Clear the scene and reset the view transform."""
+        self._scene.clear()
+        self._node_positions.clear()
+        self._prev_node_ids = frozenset()
+        self._emitters.clear()          # <-- clear emitters
+        self._view.resetTransform()
+        self._view.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
