@@ -4,6 +4,7 @@
 #include "../include/sim/game_theory/hysteretic_q_learner.hpp"
 #include <vector>
 #include <memory>
+#include <span>
 
 namespace sigint_sim {
 
@@ -15,10 +16,10 @@ public:
     ~HQLAgent() override = default;
 
     // -------- IAgent interface --------
-    Action selectAction(const NodeState& my_state,
-                        const std::vector<NodeState>& all_states,
-                        const std::vector<LinkState>& links,
-                        const EventLog& recent_events) override;
+ Action selectAction(const NodeState& my_state,
+                     std::span<const NodeState> /*all_states*/,
+                     std::span<const LinkState> links,
+                     const EventLog& /*recent_events*/) override;
 
     std::string agentType() const override { return "HQL"; }
     bool        isRLAgent()  const override { return true; }
@@ -40,10 +41,11 @@ private:
 
     game_theory::Observation buildObservation(
         const NodeState& my_state,
-        const std::vector<LinkState>& links) const;
+        std::span<const LinkState> links) const;
 
     Action fromLearnerAction(
-        const game_theory::Action& learner_action) const;
+        const game_theory::Action& learner_action,
+        double freq_base, double freq_step) const;
 };
 
 } // namespace sigint_sim
